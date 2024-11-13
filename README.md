@@ -10,10 +10,9 @@
 
 <details><summary>Tap On Me For Bot Features</summary>
 
-- unlimited filters
-- Supports all type of filters(Including Alert Button Filter)
-- Can save button filters directly
-- Supports multiple PM connections
+- unlimited reactions
+- Supports all type of emojies
+- work in both channels & groups
 - Fully modified repo
 - Deploy To Koyeb + Heroku + Railway.
 - [Developer support](https://telegram.me/CodeXSupport) 24x7
@@ -26,9 +25,8 @@
 
 * `API_ID` - Get From [Here](https://youtu.be/RdMY6Lqfi9w)
 * `API_HASH` - Get From [Here](https://youtu.be/RdMY6Lqfi9w)
-* `TG_BOT_TOKEN` - Get From [BotFather](https://youtu.be/aJILCCXfNVM)
-* `AUTH_USERS` - Your ID
-* `DATABASE_URI` - Mongodb [Database](https://youtu.be/pMJpHoiu1go)
+* `BOT_TOKEN` - Get From [BotFather](https://youtu.be/aJILCCXfNVM)
+* `BOT_USERNAME` - Username of your Telegram bot without '@'
 </details>
 </b>
 
@@ -38,17 +36,7 @@
 ```
 start - Start The Bot
 help - To get help how to use bot
-about - some basic information
-add - To add your filter
-del - To delete a filter
-delall - To delete all filters
-viewfilters - List all filters in chat
-status - Shows current status of bot
-info - Shows User Information
-connect - Connects your group to PM
-connections - Manage your connections
 ```
-</b>
 </details>
 
 ### 🥳 CREDIT
@@ -58,7 +46,7 @@ connections - Manage your connections
 
 💝 Credit Goes To [CodeXBots](https://github.com/CodeXBots)
 
-💘 Base Repo Credit [TroJanzHEX](https://github.com/TroJanzHEX)
+💘 Base Repo Credit [TheCaduceus](https://github.com/TheCaduceus)
 </details>
 
 ### 💕 CONTACT DEVELOPER
