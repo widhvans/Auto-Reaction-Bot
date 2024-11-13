@@ -1,5 +1,2 @@
-pyrogram==2.0.106
-TgCrypto
-umongo
-dnspython
-heroku3
+https://codeload.github.com/KurimuzonAkuma/pyrogram/zip/refs/heads/dev
+tgcrypto
