@@ -1,5 +1,5 @@
 <h1 align="center">
- <b><a href="https://youtu.be/kuW1DwrHC1M" target="/blank">Filter Bot</a>
+ <b><a href="https://youtu.be/kuW1DwrHC1M" target="/blank">Auto Reaction Bot</a>
 </h1>
 
 <p align="center">🩷 Thanks for Being Here 🩷</p>
