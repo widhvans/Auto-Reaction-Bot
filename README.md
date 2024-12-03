@@ -15,7 +15,7 @@
 - work in both channels & groups
 - Fully modified repo
 - Deploy To Koyeb + Heroku + Railway.
-- [Developer support](https://telegram.me/CodeXSupport) 24x7
+- [Developer support](https://telegram.me/TechifySupport) 24x7
 </details>
 
 
@@ -44,18 +44,18 @@ help - To get help how to use bot
 <details><summary>Tap On Me For Credit</summary>
 
 
-💝 Credit Goes To [CodeXBots](https://github.com/CodeXBots)
+💝 Credit Goes To [TechifyBots](https://github.com/TechifyBots)
 
 💘 Base Repo Credit [TheCaduceus](https://github.com/TheCaduceus)
 </details>
 
 ### 💕 CONTACT DEVELOPER
 
-- [Rahul](https://telegram.me/CodeXBro)
+- [Rahul](https://telegram.me/TechifySupport)
 
 ### ☕ BUY ME A COFFEE
 - [PayPal](https://paypal.me/RahulReviews)
-- [UPI](https://codexbots.github.io/Donate)
+- [UPI](https://TechifyBots.github.io/Donate)
 
 ### 📌 NOTE
 
