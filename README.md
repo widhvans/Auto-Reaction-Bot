@@ -43,10 +43,7 @@ help - To get help how to use bot
 
 <details><summary>Tap On Me For Credit</summary>
 
-
-💝 Credit Goes To [TechifyBots](https://github.com/TechifyBots)
-
-💘 Base Repo Credit [TheCaduceus](https://github.com/TheCaduceus)
+💝 [TechifyBots](https://github.com/TechifyBots)
 </details>
 
 ### 💕 CONTACT DEVELOPER
