@@ -27,6 +27,10 @@
 * `API_HASH` - Get From [Here](https://youtu.be/RdMY6Lqfi9w)
 * `BOT_TOKEN` - Get From [BotFather](https://youtu.be/aJILCCXfNVM)
 * `BOT_USERNAME` - Username of your Telegram bot without '@'
+* `AUTH_CHANNEL` - Your Force subscribe channel id.
+* `LOG_CHANNEL` - Your log channel id
+* `BOT_OWNER` - bot owners Id/ ids ( for broadcast and stats cmds). for multiple use space.
+* `DATABASE_URL` - Mongodb [Database](https://youtu.be/pMJpHoiu1go)
 </details>
 
 ### 🥳 CREDIT
