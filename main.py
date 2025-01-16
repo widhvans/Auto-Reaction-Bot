@@ -6,9 +6,9 @@ import aiofiles
 from random import choice
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
-from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, PeerIdInvalid, UserNotParticipant, MessageIdInvalid, ChatAdminRequired, EmoticonInvalid, ReactionInvalid
+from pyrogram.errors import *
 from database import Database
-from config import API_HASH, API_ID, BOT_TOKEN, EMOJIS, BOT_OWNER, DATABASE_URL, BOT_USERNAME, AUTH_CHANNEL, LOG_CHANNEL
+from config import *
 
 # Database initialization
 db = Database(DATABASE_URL, "mediatourl")
