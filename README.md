@@ -30,15 +30,6 @@
 </details>
 </b>
 
-### 😍 COMMANDS
-
-<b><details><summary>Tap On Me For Commands</summary>
-```
-start - Start The Bot
-help - To get help how to use bot
-```
-</details>
-
 ### 🥳 CREDIT
 
 <details><summary>Tap On Me For Credit</summary>
