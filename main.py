@@ -3,7 +3,6 @@ import time
 import asyncio
 import datetime
 import aiofiles
-from aiohttp import web
 from random import choice
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
@@ -22,56 +21,30 @@ Bot = Client(
     api_hash=API_HASH,
 )
 
-# Define the route table
-r = web.RouteTableDef()
-
-@r.get("/", allow_head=True)
-async def root_route_handler(request):
-    return web.Response(text='<h3 align="center"><b>I am Alive</b></h3>', content_type='text/html')
-
-async def wsrvr():
-    wa = web.Application(client_max_size=30000000)
-    wa.add_routes(r)
-    return wa
-
-async def start():
-    # Start aiohttp web server
-    app = web.AppRunner(await wsrvr())
-    await app.setup()
-    ba = "0.0.0.0"
-    port = int(os.environ.get("PORT", 8080))  # Corrected to use "PORT" in uppercase
-    site = web.TCPSite(app, ba, port)
-    await site.start()
-
 # Messages and buttons
-START_TEXT = """**{},
+START_TEXT = """<b>{},
 
 ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ
 
-<blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote>**"""
+<blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
 LOG_TEXT = """<b>#NewUser
     
 ID - <code>{}</code>
 
-Name - {}</b>
-"""
+Name - {}</b>"""
 
 START_BUTTONS = InlineKeyboardMarkup(
-    [
-        [
-            InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘs ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')
-        ],
-        [
-            InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url='https://telegram.me/StreamExplainer'),
-            InlineKeyboardButton(text='• ꜱᴜᴩᴩᴏʀᴛ •', url='https://telegram.me/TechifySupport')
-        ],
-        [
-            InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')
-        ]
-    ]
+    [[
+        InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘs ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')
+    ],[
+        InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url='https://telegram.me/StreamExplainer'),
+        InlineKeyboardButton(text='• ꜱᴜᴩᴩᴏʀᴛ •', url='https://telegram.me/TechifySupport')
+    ],[
+        InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')
+    ]]
 )
 
 
@@ -81,9 +54,9 @@ async def send_msg(user_id, message):
         await message.copy(chat_id=user_id)
         return 200, None
     except FloodWait as e:
-        await asyncio.sleep(e.x)
+        await asyncio.sleep(e.value)
         return send_msg(user_id, message)
-    except (InputUserDeactivated, UserIsBlocked, PeerIdInvalid):
+    except (InputUserDeactivated, UserIsBlocked):
         return 400, f"{user_id} : error\n"
     except Exception as e:
         return 500, f"{user_id} : {str(e)}\n"
@@ -97,10 +70,9 @@ async def get_fsub(bot, message):
     except UserNotParticipant:
         # Generate the channel invite link
         channel_link = (await bot.get_chat(target_channel_id)).invite_link
-        join_button = InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)
+        keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]]
 
         # Display a message encouraging the user to join
-        keyboard = [[join_button]]
         await message.reply(
             f"<b>👋 Hello {message.from_user.mention()}, Welcome!</b>\n\n"
             "📢 <b>Exclusive Access Alert!</b> ✨\n\n"
@@ -190,7 +162,7 @@ async def send_reaction(_, msg: Message):
     try:
         # Assuming Config.EMOJIS is a predefined list of emojis
         await msg.react(choice(EMOJIS))
-    except (MessageIdInvalid, EmoticonInvalid, ChatAdminRequired, ReactionInvalid):
+    except:
         pass
 
 # Start bot
