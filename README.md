@@ -28,7 +28,6 @@
 * `BOT_TOKEN` - Get From [BotFather](https://youtu.be/aJILCCXfNVM)
 * `BOT_USERNAME` - Username of your Telegram bot without '@'
 </details>
-</b>
 
 ### 🥳 CREDIT
 
