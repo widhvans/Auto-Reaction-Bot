@@ -11,11 +11,11 @@ from database import Database
 from config import *
 
 # Database initialization
-db = Database(DATABASE_URL, "mediatourl")
+db = Database(DATABASE_URL, "autoreactionbot")
 
 # Bot setup
 Bot = Client(
-    "Media To Url Bot",
+    "Auto Reaction Bot",
     bot_token=BOT_TOKEN,
     api_id=API_ID,
     api_hash=API_HASH,
