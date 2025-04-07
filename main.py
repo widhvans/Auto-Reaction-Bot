@@ -42,7 +42,7 @@ VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
 UPDATE_CHANNEL = "https://t.me/joinnowearn"
 
 # Ensure BOT_OWNER matches config.py
-BOT_OWNER = int(os.environ.get("BOT_OWNER", "-1001814841940"))
+BOT_OWNER = int(os.environ.get("BOT_OWNER", "-1001938030055"))
 
 # Smart reaction manager
 class ReactionManager:
