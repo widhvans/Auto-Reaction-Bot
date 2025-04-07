@@ -41,6 +41,9 @@ VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
 # Define UPDATE_CHANNEL since it's not in config.py
 UPDATE_CHANNEL = "https://t.me/joinnowearn"
 
+# Ensure BOT_OWNER is correctly imported
+BOT_OWNER = int(os.environ.get("BOT_OWNER", "-1001814841940"))
+
 # Smart reaction manager
 class ReactionManager:
     def __init__(self):
@@ -115,16 +118,16 @@ START_BUTTONS = InlineKeyboardMarkup(
         [InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')],
         [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url=UPDATE_CHANNEL)],
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴅʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
     ]
 )
 
 # Helper functions
 async def save_connected_user(user_id):
-    # Check if user exists in connected_users collection
+    # Use db.connected_users as a collection
     if not await db.connected_users.find_one({'user_id': user_id}):
         await db.connected_users.insert_one({'user_id': user_id})
-        logger.info(f"Connected user {user_id} added to database")
+        logger.info(f"Connected user {user_id} added to connected_users collection")
 
 async def send_msg(user_id, message):
     try:
@@ -182,7 +185,7 @@ async def start(bot, update):
         return
 
     await update.reply_text(
-        text=START_TEXT.format(update.from_user.mention()),
+        text=START_TEXT.format(update.from_user.mention),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=START_BUTTONS
     )
@@ -203,7 +206,6 @@ async def users(bot, update):
 async def stats(bot, update):
     total_users = await db.total_users_count()
     total_clones = await db.total_clones_count()
-    all_clones = await db.get_all_clones()
     total_connected_users = await db.connected_users.count_documents({})
 
     text = (
