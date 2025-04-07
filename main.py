@@ -99,37 +99,6 @@ async def get_fsub(bot, message):
     else:
         return True
 
-# Activate clones on startup
-async def activate_clones():
-    all_clones = await db.get_all_clones()
-    for clone in all_clones:
-        if clone['active']:
-            clone_bot = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH)
-            
-            @clone_bot.on_message(filters.private & filters.command(["start"]))
-            async def clone_start(client, update):
-                clone_buttons = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
-                    [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
-                    [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
-                ])
-                await update.reply_text(
-                    text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
-                    link_preview_options=LinkPreviewOptions(is_disabled=True),
-                    reply_markup=clone_buttons
-                )
-
-            @clone_bot.on_message(filters.all)
-            async def clone_reaction(client, msg):
-                try:
-                    await msg.react(choice(EMOJIS))
-                    if msg.chat.type in ['group', 'supergroup', 'channel']:
-                        await db.update_connected_chats(clone['_id'], msg.chat.id)
-                except:
-                    pass
-            
-            asyncio.create_task(clone_bot.start())
-
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
@@ -290,7 +259,7 @@ async def handle_clone_token(bot, message):
             except:
                 pass
         
-        asyncio.create_task(clone_bot.start())
+        await clone_bot.start()
 
     except Exception as e:
         await processing_msg.edit(f"❌ Failed to clone bot: {str(e)}")
@@ -350,7 +319,37 @@ async def send_reaction(_, msg: Message):
     except:
         pass
 
-# Start bot and activate clones
+# Activate clones on startup and run bot
+async def activate_clones():
+    all_clones = await db.get_all_clones()
+    for clone in all_clones:
+        if clone['active']:
+            clone_bot = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH)
+            
+            @clone_bot.on_message(filters.private & filters.command(["start"]))
+            async def clone_start(client, update):
+                clone_buttons = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                    [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                    [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                ])
+                await update.reply_text(
+                    text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    reply_markup=clone_buttons
+                )
+
+            @clone_bot.on_message(filters.all)
+            async def clone_reaction(client, msg):
+                try:
+                    await msg.react(choice(EMOJIS))
+                    if msg.chat.type in ['group', 'supergroup', 'channel']:
+                        await db.update_connected_chats(clone['_id'], msg.chat.id)
+                except:
+                    pass
+            
+            await clone_bot.start()
+
 async def main():
     await Bot.start()
     await activate_clones()
@@ -358,4 +357,5 @@ async def main():
     await asyncio.Future()  # Keep the bot running
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
