@@ -16,11 +16,11 @@ db = Database(DATABASE_URL, "autoreactionbot")
 
 # Bot setup with MemoryStorage
 Bot = Client(
-    "Auto Reaction Bot",
+    name="AutoReactionBot",  # MemoryStorage के लिए नाम देना ज़रूरी है
     bot_token=BOT_TOKEN,
     api_id=API_ID,
     api_hash=API_HASH,
-    storage=MemoryStorage()  # SQLite सेशन को डिसेबल करने के लिए
+    in_memory=True  # SQLite सेशन को डिसेबल करने के लिए इन-मेमोरी स्टोरेज
 )
 
 # Messages and buttons
@@ -36,7 +36,7 @@ CLONE_START_TEXT = """<b>@{parent_bot}
 
 ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
-ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴮᴜᴅᴅʏɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
+ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
 
 <blockquote>ʜᴇʟʟᴏ {}, ᴛʜɪs ʙᴏᴛ ɪs ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
@@ -166,7 +166,7 @@ async def broadcast(bot, update):
     clone_clients = []
     for clone in all_clones:
         if clone['active']:
-            clone_client = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, storage=MemoryStorage())
+            clone_client = Client(name=f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, in_memory=True)
             await clone_client.start()
             clone_clients.append(clone_client)
 
@@ -219,7 +219,7 @@ async def handle_clone_token(bot, message):
     token = message.text
     processing_msg = await message.reply("⏳ Processing your clone request...")
     try:
-        temp_client = Client("temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, storage=MemoryStorage())
+        temp_client = Client(name="temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         await temp_client.start()
         bot_info = await temp_client.get_me()
         await temp_client.stop()
@@ -237,7 +237,7 @@ async def handle_clone_token(bot, message):
             reply_markup=clone_buttons
         )
 
-        clone_bot = Client(f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, storage=MemoryStorage())
+        clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
         @clone_bot.on_message(filters.private & filters.command(["start"]))
         async def clone_start(client, update):
@@ -328,11 +328,11 @@ async def activate_clones():
         if clone['active']:
             try:
                 clone_bot = Client(
-                    f"clone_{clone['username']}",
+                    name=f"clone_{clone['username']}",
                     bot_token=clone['token'],
                     api_id=API_ID,
                     api_hash=API_HASH,
-                    storage=MemoryStorage()
+                    in_memory=True
                 )
                 
                 @clone_bot.on_message(filters.private & filters.command(["start"]))
