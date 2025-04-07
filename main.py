@@ -41,9 +41,6 @@ VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
 # Define UPDATE_CHANNEL since it's not in config.py
 UPDATE_CHANNEL = "https://t.me/joinnowearn"
 
-# Ensure BOT_OWNER matches config.py
-BOT_OWNER = int(os.environ.get("BOT_OWNER", "-1001938030055"))
-
 # Smart reaction manager
 class ReactionManager:
     def __init__(self):
@@ -99,17 +96,7 @@ START_TEXT = """<b>{},
 CLONE_START_TEXT = "<b>@{0}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
-Follow these steps to create your own bot and clone me:
-1. Go to @BotFather on Telegram.
-2. Send /newbot and follow the instructions to create a new bot.
-3. Give your bot a name and username (e.g., MyReactionBot).
-4. Once created, @BotFather will give you a token (e.g., 123456789:ABCDEF...).
-5. Copy that token and send it here to clone me!
-
-Your clone will:
-- Work exactly like me
-- Have an 'Add to Group/Channel' button
-- Be manageable from here"""
+Create a bot with @BotFather and send me the token here to clone me!"""
 
 START_BUTTONS = InlineKeyboardMarkup(
     [
@@ -196,26 +183,6 @@ async def users(bot, update):
     )
     logger.info(f"Users command executed by owner: Total users = {total_users}")
 
-@Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
-async def stats(bot, update):
-    total_users = await db.users.count_documents({})
-    total_clones = await db.clones.count_documents({})
-    all_clones = await db.get_all_clones()
-    total_connected_users = total_users  # Since we're using db.users for all connected users
-
-    text = (
-        f"📊 Bot Statistics\n\n"
-        f"👥 Total Users: {total_users}\n"
-        f"🤖 Total Cloned Bots: {total_clones}\n"
-        f"💬 Total Connected Users: {total_connected_users}"
-    )
-    await update.reply_text(
-        text=text,
-        quote=True,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
-    logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}, Connected Users={total_connected_users}")
-
 @Bot.on_message(filters.private & filters.command("total"))
 async def total(bot, update):
     user_id = update.from_user.id
@@ -237,48 +204,6 @@ async def total(bot, update):
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
     logger.info(f"Total command executed by {user_id}: Clones={total_clones}, Connected Users={len(connected_users)}")
-
-@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
-async def broadcast(bot, update):
-    broadcast_msg = update.reply_to_message
-    out = await update.reply_text(text="Broadcast Started!")
-    start_time = time.time()
-    done = 0
-    failed = 0
-    success = 0
-
-    # Get all connected users from users collection
-    all_connected_users = [user['id'] async for user in db.users.find()]
-    total_users = len(all_connected_users)
-    broadcast_ids = {"total": total_users, "current": done, "failed": failed, "success": success}
-
-    async with aiofiles.open('broadcast.txt', 'w') as broadcast_log_file:
-        for user_id in all_connected_users:
-            sts, msg = await send_msg(user_id=user_id, message=broadcast_msg)
-            if msg is not None:
-                await broadcast_log_file.write(msg)
-            if sts == 200:
-                success += 1
-            else:
-                failed += 1
-            done += 1
-            broadcast_ids.update({"current": done, "failed": failed, "success": success})
-
-    completed_in = datetime.timedelta(seconds=int(time.time() - start_time))
-    await asyncio.sleep(3)
-    await out.delete()
-    if failed == 0:
-        await update.reply_text(
-            text=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users}.\nDone: {done}, Success: {success}, Failed: {failed}",
-            quote=True
-        )
-    else:
-        await update.reply_document(
-            document='broadcast.txt',
-            caption=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users}.\nDone: {done}, Success: {success}, Failed: {failed}"
-        )
-    os.remove('broadcast.txt')
-    logger.info(f"Broadcast completed: Done={done}, Success={success}, Failed={failed}")
 
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
@@ -320,7 +245,7 @@ async def handle_clone_token(bot, message):
         clone_buttons = InlineKeyboardMarkup([
             [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
             [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-            [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+            [INLINEKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
         ])
 
         await processing_msg.edit(
