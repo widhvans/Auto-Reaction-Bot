@@ -30,6 +30,16 @@ START_TEXT = """<b>{},
 
 <blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
+CLONE_TEXT = """<b>Clone Your Bot</b>
+Send your bot token to create a clone of me!
+Your clone will:
+- Work exactly like me
+- Have an 'Add to Group/Channel' button
+- Be manageable from 'My Bots' section"""
+
+MY_BOTS_TEXT = """<b>Your Cloned Bots</b>
+Here are all your active bot clones:"""
+
 LOG_TEXT = """<b>#NewUser
     
 ID - <code>{}</code>
@@ -37,16 +47,15 @@ ID - <code>{}</code>
 Name - {}</b>"""
 
 START_BUTTONS = InlineKeyboardMarkup(
-    [[
-        InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘs ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')
-    ],[
-        InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url='https://telegram.me/StreamExplainer'),
-        InlineKeyboardButton(text='• ꜱᴜᴩᴩᴏʀᴛ •', url='https://telegram.me/TechifySupport')
-    ],[
-        InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')
-    ]]
+    [
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘs ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
+        [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url='https://telegram.me/StreamExplainer'),
+         InlineKeyboardButton(text='• ꜱᴜᴩᴩᴏʀᴛ •', url='https://telegram.me/TechifySupport')],
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
+        [InlineKeyboardButton(text='• ᴍʏ ʙᴏᴛs •', callback_data='my_bots'),
+         InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot')]
+    ]
 )
-
 
 # Helper functions
 async def send_msg(user_id, message):
@@ -62,17 +71,13 @@ async def send_msg(user_id, message):
         return 500, f"{user_id} : {str(e)}\n"
 
 async def get_fsub(bot, message):
-    target_channel_id = AUTH_CHANNEL  # Your channel ID
+    target_channel_id = AUTH_CHANNEL
     user_id = message.from_user.id
     try:
-        # Check if user is a member of the required channel
         await bot.get_chat_member(target_channel_id, user_id)
     except UserNotParticipant:
-        # Generate the channel invite link
         channel_link = (await bot.get_chat(target_channel_id)).invite_link
         keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]]
-
-        # Display a message encouraging the user to join
         await message.reply(
             f"<b>👋 Hello {message.from_user.mention()}, Welcome!</b>\n\n"
             "📢 <b>Exclusive Access Alert!</b> ✨\n\n"
@@ -84,7 +89,6 @@ async def get_fsub(bot, message):
         return False
     else:
         return True
-
 
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
@@ -138,7 +142,6 @@ async def broadcast(bot, update):
             if sts == 400:
                 await db.delete_user(user['id'])
             done += 1
-
             broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
 
     completed_in = datetime.timedelta(seconds=int(time.time() - start_time))
@@ -156,11 +159,89 @@ async def broadcast(bot, update):
         )
     os.remove('broadcast.txt')
 
+# Clone handling
+@Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
+async def handle_clone_token(bot, message):
+    token = message.text
+    try:
+        # Verify token by creating temporary client
+        temp_client = Client("temp", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+        await temp_client.start()
+        bot_info = await temp_client.get_me()
+        await temp_client.stop()
+
+        # Add clone to database
+        clone_data = await db.add_clone(message.from_user.id, token, bot_info.username)
+        
+        # Create clone buttons
+        clone_buttons = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+            [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
+            [InlineKeyboardButton("Parent Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+        ])
+
+        await message.reply(
+            f"✅ Bot cloned successfully!\n\nUsername: @{bot_info.username}\nParent: @{BOT_USERNAME}",
+            reply_markup=clone_buttons
+        )
+
+        # Start the cloned bot instance
+        clone_bot = Client(f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+        @clone_bot.on_message(filters.all)
+        async def clone_reaction(client, msg):
+            try:
+                await msg.react(choice(EMOJIS))
+            except:
+                pass
+        asyncio.create_task(clone_bot.start())
+
+    except Exception as e:
+        await message.reply(f"❌ Failed to clone bot: {str(e)}")
+
+@Bot.on_callback_query(filters.regex("clone_bot"))
+async def clone_bot_callback(bot, query):
+    await query.message.reply(CLONE_TEXT)
+
+@Bot.on_callback_query(filters.regex("my_bots"))
+async def my_bots_callback(bot, query):
+    clones = await db.get_user_clones(query.from_user.id)
+    if not clones:
+        await query.message.reply("You haven't cloned any bots yet!")
+        return
+
+    buttons = []
+    for clone in clones:
+        status = "✅" if clone['active'] else "❌"
+        buttons.append([
+            InlineKeyboardButton(f"{status} @{clone['username']}", callback_data=f"toggle_{clone['_id']}"),
+            InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
+        ])
+
+    await query.message.reply(
+        MY_BOTS_TEXT,
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+@Bot.on_callback_query(filters.regex(r"toggle_(.+)"))
+async def toggle_clone_callback(bot, query):
+    clone_id = query.data.split("_")[1]
+    clone = await db.clones.find_one({'_id': clone_id})
+    new_status = not clone['active']
+    await db.toggle_clone(clone_id, new_status)
+    await query.answer(f"Bot {'activated' if new_status else 'deactivated'}!")
+    await my_bots_callback(bot, query)
+
+@Bot.on_callback_query(filters.regex(r"delete_(.+)"))
+async def delete_clone_callback(bot, query):
+    clone_id = query.data.split("_")[1]
+    await db.clones.delete_one({'_id': clone_id})
+    await query.answer("Bot deleted!")
+    await my_bots_callback(bot, query)
+
 # Reaction handling
 @Bot.on_message(filters.all)
 async def send_reaction(_, msg: Message):
     try:
-        # Assuming Config.EMOJIS is a predefined list of emojis
         await msg.react(choice(EMOJIS))
     except:
         pass
