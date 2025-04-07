@@ -5,7 +5,7 @@ import datetime
 import aiofiles
 from random import choice
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import *
 from database import Database
 from config import *
@@ -30,20 +30,20 @@ START_TEXT = """<b>{},
 
 <blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
-CLONE_START_TEXT = """<b>{},
+CLONE_START_TEXT = """<b>@{parent_bot}
 
-ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ @{parent_bot} - ᴀ ᴘᴏᴡᴇʀꜰᴜ BUDDY ʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
+ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
 ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
 
-<blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
+<blockquote>ʜᴇʟʟᴏ {}, ᴛʜɪs ʙᴏᴛ ɪs ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Send your bot token to create a clone of me!
 Your clone will:
 - Work exactly like me
-- Have an 'Add to Group/Channel' button
-- Be manageable from 'My Bots' section"""
+-Step 1 Have an 'Add to Group/Channel' button
+- Step 2 Be manageable from 'My Bots' section"""
 
 MY_BOTS_TEXT = """<b>Your Cloned Bots</b>
 Here are all your active bot clones:"""
@@ -93,6 +93,7 @@ async def get_fsub(bot, message):
             "This helps us keep you informed and ensures top-notch service just for you! 😊\n\n"
             "<i>🚀 Join now and dive into a world of knowledge and creativity!</i>",
             reply_markup=InlineKeyboardMarkup(keyboard),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         return False
     else:
@@ -111,7 +112,7 @@ async def start(bot, update):
 
     await update.reply_text(
         text=START_TEXT.format(update.from_user.mention),
-        disable_web_page_preview=True,
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=START_BUTTONS
     )
 
@@ -122,7 +123,7 @@ async def users(bot, update):
     await update.reply_text(
         text=text,
         quote=True,
-        disable_web_page_preview=True
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
 
 @Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
@@ -211,7 +212,7 @@ async def handle_clone_token(bot, message):
         clone_buttons = InlineKeyboardMarkup([
             [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
             [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-            [InlineKeyboardButton("Parent Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+            [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
         ])
 
         await processing_msg.edit(
@@ -227,11 +228,11 @@ async def handle_clone_token(bot, message):
             clone_buttons = InlineKeyboardMarkup([
                 [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
                 [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-                [InlineKeyboardButton("Parent Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
             ])
             await update.reply_text(
-                text=CLONE_START_TEXT.format(update.from_user.mention, parent_bot=BOT_USERNAME),
-                disable_web_page_preview=True,
+                text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
                 reply_markup=clone_buttons
             )
 
@@ -275,18 +276,24 @@ async def my_bots_callback(bot, query):
 async def toggle_clone_callback(bot, query):
     clone_id = query.data.split("_")[1]
     clone = await db.clones.find_one({'_id': clone_id})
-    new_status = not clone['active']
-    await db.toggle_clone(clone_id, new_status)
-    await query.answer(f"Bot {'activated' if new_status else 'deactivated'}!")
-    await my_bots_callback(bot, query)
+    if clone:
+        new_status = not clone['active']
+        await db.toggle_clone(clone_id, new_status)
+        await query.answer(f"Bot {'activated' if new_status else 'deactivated'}!")
+        await my_bots_callback(bot, query)
+    else:
+        await query.answer("Bot not found!")
 
 @Bot.on_callback_query(filters.regex(r"delete_(.+)"))
 async def delete_clone_callback(bot, query):
     clone_id = query.data.split("_")[1]
     clone = await db.clones.find_one({'_id': clone_id})
-    await db.clones.delete_one({'_id': clone_id})
-    await query.answer(f"Bot @{clone['username']} deleted successfully!")
-    await my_bots_callback(bot, query)
+    if clone:
+        await db.clones.delete_one({'_id': clone_id})
+        await query.answer(f"Bot @{clone['username']} deleted successfully!")
+        await my_bots_callback(bot, query)
+    else:
+        await query.answer("Bot not found or already deleted!")
 
 # Reaction handling
 @Bot.on_message(filters.all)
