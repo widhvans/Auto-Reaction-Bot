@@ -96,7 +96,13 @@ START_TEXT = """<b>{},
 CLONE_START_TEXT = "<b>@{0}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
-Send your bot token to create a clone of me!
+Follow these steps to create your own bot and clone me:
+1. Go to @BotFather on Telegram.
+2. Send /newbot and follow the instructions to create a new bot.
+3. Give your bot a name and username (e.g., MyReactionBot).
+4. Once created, @BotFather will give you a token (e.g., 123456789:ABCDEF...).
+5. Copy that token and send it here to clone me!
+
 Your clone will:
 - Work exactly like me
 - Have an 'Add to Group/Channel' button
@@ -114,6 +120,12 @@ START_BUTTONS = InlineKeyboardMarkup(
 )
 
 # Helper functions
+async def save_connected_user(user_id):
+    # Check if user exists in connected_users collection
+    if not await db.connected_users.find_one({'user_id': user_id}):
+        await db.connected_users.insert_one({'user_id': user_id})
+        logger.info(f"Connected user {user_id} added to database")
+
 async def send_msg(user_id, message):
     try:
         await message.copy(chat_id=user_id)
@@ -156,17 +168,21 @@ async def get_fsub(bot, message):
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
     user_id = update.from_user.id
+    # Save to users collection (for main bot stats)
     if not await db.is_user_exist(user_id):
         await db.add_user(user_id)
         await bot.send_message(LOG_CHANNEL, LOG_TEXT.format(user_id, update.from_user.mention))
-        logger.info(f"New user added: {user_id}")
+        logger.info(f"New user added to users collection: {user_id}")
+    
+    # Save to connected_users collection (for broadcast and total)
+    await save_connected_user(user_id)
     
     is_subscribed = await get_fsub(bot, update)
     if not is_subscribed:
         return
 
     await update.reply_text(
-        text=START_TEXT.format(update.from_user.mention),
+        text=START_TEXT.format(update.from_user.mention()),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=START_BUTTONS
     )
@@ -188,24 +204,20 @@ async def stats(bot, update):
     total_users = await db.total_users_count()
     total_clones = await db.total_clones_count()
     all_clones = await db.get_all_clones()
-    total_connected_users = set()
-
-    for clone in all_clones:
-        connected_users = clone.get('connected_users', [])
-        total_connected_users.update(connected_users)
+    total_connected_users = await db.connected_users.count_documents({})
 
     text = (
         f"📊 Bot Statistics\n\n"
         f"👥 Total Users: {total_users}\n"
         f"🤖 Total Cloned Bots: {total_clones}\n"
-        f"💬 Total Connected Users (Clones): {len(total_connected_users)}"
+        f"💬 Total Connected Users (Clones): {total_connected_users}"
     )
     await update.reply_text(
         text=text,
         quote=True,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
-    logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}, Connected Users={len(total_connected_users)}")
+    logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}, Connected Users={total_connected_users}")
 
 @Bot.on_message(filters.private & filters.command("total"))
 async def total(bot, update):
@@ -238,18 +250,13 @@ async def broadcast(bot, update):
     failed = 0
     success = 0
 
-    # Get all connected users from clones
-    all_clones = await db.get_all_clones()
-    total_connected_users = set()
-    for clone in all_clones:
-        connected_users = clone.get('connected_users', [])
-        total_connected_users.update(connected_users)
-
-    total_users = len(total_connected_users)
+    # Get all connected users from connected_users collection
+    all_connected_users = [user['user_id'] async for user in db.connected_users.find()]
+    total_users = len(all_connected_users)
     broadcast_ids = {"total": total_users, "current": done, "failed": failed, "success": success}
 
     async with aiofiles.open('broadcast.txt', 'w') as broadcast_log_file:
-        for user_id in total_connected_users:
+        for user_id in all_connected_users:
             sts, msg = await send_msg(user_id=user_id, message=broadcast_msg)
             if msg is not None:
                 await broadcast_log_file.write(msg)
@@ -335,6 +342,7 @@ async def handle_clone_token(bot, message):
                 return
             
             user_id = update.from_user.id
+            await save_connected_user(user_id)  # Save to connected_users
             if user_id not in clone_data.get('connected_users', []):
                 await db.clones.update_one(
                     {'_id': clone_data['_id']},
@@ -362,6 +370,7 @@ async def handle_clone_token(bot, message):
                 return
             
             user_id = update.from_user.id
+            await save_connected_user(user_id)  # Save to connected_users
             if user_id not in clone_data.get('connected_users', []):
                 await db.clones.update_one(
                     {'_id': clone_data['_id']},
@@ -466,6 +475,7 @@ async def activate_clones():
                         return
                     
                     user_id = update.from_user.id
+                    await save_connected_user(user_id)  # Save to connected_users
                     if user_id not in clone_data.get('connected_users', []):
                         await db.clones.update_one(
                             {'_id': clone_data['_id']},
@@ -493,6 +503,7 @@ async def activate_clones():
                         return
                     
                     user_id = update.from_user.id
+                    await save_connected_user(user_id)  # Save to connected_users
                     if user_id not in clone_data.get('connected_users', []):
                         await db.clones.update_one(
                             {'_id': clone_data['_id']},
