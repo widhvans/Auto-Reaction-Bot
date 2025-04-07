@@ -49,7 +49,6 @@ class ReactionManager:
         chat_id = msg.chat.id
         current_time = time.time()
 
-        # Check rate limit for this chat
         if chat_id not in self.rate_limits:
             self.rate_limits[chat_id] = {'count': 0, 'last_reset': current_time}
         
@@ -100,23 +99,15 @@ Your clone will:
 - Have an 'Add to Group/Channel' button
 - Be manageable from 'My Bots' section"""
 
-MY_BOTS_TEXT = """<b>Your Cloned Bots</b>
-Here are all your active bot clones:"""
-
-LOG_TEXT = """<b>#NewUser
-    
-ID - <code>{}</code>
-
-Name - {}</b>"""
-
 START_BUTTONS = InlineKeyboardMarkup(
     [
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘs ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
         [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url='https://telegram.me/StreamExplainer'),
          InlineKeyboardButton(text='• ꜱᴜᴩᴩᴏʀᴛ •', url='https://telegram.me/TechifySupport')],
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
-        [InlineKeyboardButton(text='• ᴍʏ ʙᴏᴛs •', callback_data='my_bots'),
-         InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot')]
+        [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot'),
+         InlineKeyboardButton(text='• ʙᴏᴛ ᴄᴏᴜɴᴛ •', callback_data='bot_count'),
+         InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')]
     ]
 )
 
@@ -320,25 +311,23 @@ async def handle_clone_token(bot, message):
 
         clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
-        @clone_bot.on_message(filters.private & filters.command(["start"]))
-        async def clone_start(client, update):
-            if hasattr(client, '_start_handled'):  # Prevent duplicate replies
-                return
-            client._start_handled = True
-            
-            clone_buttons = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
-                [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-                [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
-            ])
-            await update.reply_text(
-                text=CLONE_START_TEXT.format(BOT_USERNAME),
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-                reply_markup=clone_buttons
-            )
-            logger.info(f"Start command processed for clone @{bot_info.username} by user {update.from_user.id}")
-            await asyncio.sleep(1)  # Reset after a short delay
-            client._start_handled = False
+        @clone_bot.on_message(filters.private)
+        async def clone_reply(client, update):
+            if update.text == "/start":
+                clone_buttons = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+                    [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
+                    [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                ])
+                await update.reply_text(
+                    text=CLONE_START_TEXT.format(bot_info.username),
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    reply_markup=clone_buttons
+                )
+                logger.info(f"Start command processed for clone @{bot_info.username} by user {update.from_user.id}")
+            else:
+                await update.reply_text(f"Received: {update.text}")
+                logger.info(f"Message '{update.text}' processed for clone @{bot_info.username} by user {update.from_user.id}")
 
         @clone_bot.on_message(filters.group | filters.channel)
         async def clone_reaction(client, msg):
@@ -372,89 +361,24 @@ async def clone_bot_callback(bot, query):
     await query.message.reply(CLONE_TEXT)
     logger.info(f"Clone bot callback triggered by {query.from_user.id}")
 
-@Bot.on_callback_query(filters.regex("my_bots"))
-async def my_bots_callback(bot, query):
-    # Fetch fresh data from database every time
-    clones = await db.get_user_clones(query.from_user.id)
-    logger.info(f"Fetched clones for user {query.from_user.id}: {len(clones)} found")
+@Bot.on_callback_query(filters.regex("bot_count"))
+async def bot_count_callback(bot, query):
+    total_clones = await db.total_clones_count()
+    await query.message.reply(f"Total Cloned Bots: {total_clones}")
+    logger.info(f"Bot count requested by {query.from_user.id}: {total_clones} clones")
 
-    if not clones:
-        await query.message.edit_text("You haven't cloned any bots yet!")
-        logger.info(f"No clones found for user {query.from_user.id}")
-        return
-
-    buttons = []
-    seen_usernames = set()
-    active_bots = []
-    for clone in clones:
-        if clone['username'] not in seen_usernames:
-            try:
-                temp_client = Client(name=f"check_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, in_memory=True)
-                await temp_client.start()
-                await temp_client.get_me()
-                await temp_client.stop()
-                
-                status = "✅" if clone['active'] else "❌"
-                buttons.append([
-                    InlineKeyboardButton(f"{status} @{clone['username']}", callback_data=f"toggle_{clone['_id']}"),
-                    InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
-                ])
-                seen_usernames.add(clone['username'])
-                active_bots.append(clone)
-            except Exception:
-                logger.warning(f"Bot @{clone['username']} is invalid or deleted, skipping")
-                continue
-
-    if not buttons:
-        await query.message.edit_text("No active bots found!")
-        logger.info(f"No active bots found for user {query.from_user.id}")
-    else:
-        await query.message.edit_text(
-            MY_BOTS_TEXT,
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
-        logger.info(f"My bots list updated for user {query.from_user.id}: {len(active_bots)} active bots")
-
-@Bot.on_callback_query(filters.regex(r"toggle_(.+)"))
-async def toggle_clone_callback(bot, query):
-    clone_id = query.data.split("_")[1]
-    clone = await db.clones.find_one({'_id': clone_id})
-    if clone:
-        new_status = not clone['active']
-        await db.toggle_clone(clone_id, new_status)
-        await query.answer(f"Bot {'activated' if new_status else 'deactivated'}!")
-        await my_bots_callback(bot, query)
-        logger.info(f"Bot @{clone['username']} toggled to {'active' if new_status else 'inactive'} by {query.from_user.id}")
-    else:
-        await query.answer("Bot not found!")
-        await my_bots_callback(bot, query)
-        logger.warning(f"Toggle attempt on non-existent bot ID: {clone_id}")
-
-@Bot.on_callback_query(filters.regex(r"delete_(.+)"))
-async def delete_clone_callback(bot, query):
-    clone_id = query.data.split("_")[1]
-    clone = await db.clones.find_one({'_id': clone_id})
-    if clone:
-        # Immediately remove from list (frontend)
-        await query.answer(f"Bot @{clone['username']} deleted!")
-        await my_bots_callback(bot, query)  # Instant list update
-        
-        # Perform actual deletion in background
-        async def delete_in_background():
-            try:
-                result = await db.clones.delete_one({'_id': clone_id})
-                if result.deleted_count == 1:
-                    logger.info(f"Bot @{clone['username']} successfully removed from database by {query.from_user.id}")
-                else:
-                    logger.warning(f"Failed to remove bot @{clone['username']} from database")
-            except Exception as e:
-                logger.error(f"Error deleting bot @{clone['username']} from database: {str(e)}")
-
-        asyncio.create_task(delete_in_background())
-    else:
-        await query.answer("Bot not found or already deleted!")
-        await my_bots_callback(bot, query)
-        logger.warning(f"Delete attempt on non-existent bot ID: {clone_id}")
+@Bot.on_callback_query(filters.regex("disconnect_all"))
+async def disconnect_all_callback(bot, query):
+    all_clones = await db.get_all_clones()
+    disconnected_count = 0
+    for clone in all_clones:
+        if clone['active']:
+            await db.toggle_clone(clone['_id'], False)
+            disconnected_count += 1
+            logger.info(f"Bot @{clone['username']} disconnected by {query.from_user.id}")
+    
+    await query.message.reply(f"Disconnected {disconnected_count} bots successfully!")
+    logger.info(f"All bots disconnected by {query.from_user.id}: {disconnected_count} bots affected")
 
 # Reaction handling for main bot
 @Bot.on_message(filters.group | filters.channel)
@@ -475,25 +399,23 @@ async def activate_clones():
                     in_memory=True
                 )
                 
-                @clone_bot.on_message(filters.private & filters.command(["start"]))
-                async def clone_start(client, update):
-                    if hasattr(client, '_start_handled'):  # Prevent duplicate replies
-                        return
-                    client._start_handled = True
-                    
-                    clone_buttons = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
-                        [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
-                        [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
-                    ])
-                    await update.reply_text(
-                        text=CLONE_START_TEXT.format(BOT_USERNAME),
-                        link_preview_options=LinkPreviewOptions(is_disabled=True),
-                        reply_markup=clone_buttons
-                    )
-                    logger.info(f"Start command processed for clone @{clone['username']} by {update.from_user.id}")
-                    await asyncio.sleep(1)  # Reset after a short delay
-                    client._start_handled = False
+                @clone_bot.on_message(filters.private)
+                async def clone_reply(client, update):
+                    if update.text == "/start":
+                        clone_buttons = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                            [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                            [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                        ])
+                        await update.reply_text(
+                            text=CLONE_START_TEXT.format(clone['username']),
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
+                            reply_markup=clone_buttons
+                        )
+                        logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id}")
+                    else:
+                        await update.reply_text(f"Received: {update.text}")
+                        logger.info(f"Message '{update.text}' processed for clone @{clone['username']} by user {update.from_user.id}")
 
                 @clone_bot.on_message(filters.group | filters.channel)
                 async def clone_reaction(client, msg):
@@ -521,7 +443,6 @@ async def activate_clones():
 async def main():
     await Bot.start()
     logger.info("Main Bot Started!")
-    # Start the reaction manager processing task within the main event loop
     asyncio.create_task(reaction_manager.process_reactions())
     await activate_clones()
     await asyncio.Future()  # Keep the bot running
