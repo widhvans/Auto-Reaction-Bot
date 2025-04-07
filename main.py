@@ -38,6 +38,9 @@ Bot = Client(
 # Positive Telegram reaction emojis only
 VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
 
+# Define UPDATE_CHANNEL since it's not in config.py
+UPDATE_CHANNEL = "https://t.me/joinnowearn"
+
 # Smart reaction manager
 class ReactionManager:
     def __init__(self):
@@ -97,17 +100,14 @@ Your clone will:
 - Have an 'Add to Group/Channel' button
 - Be manageable from here"""
 
-# Fallback for UPDATE_CHANNEL if not defined in config.py
-UPDATE_CHANNEL = getattr(globals().get('config', {}), 'UPDATE_CHANNEL', 'https://telegram.me/StreamExplainer')
-
 START_BUTTONS = InlineKeyboardMarkup(
     [
+        [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot')],
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
+        [InlineKeyboardButton(text='• ʙᴏᴛ ᴄᴏᴜɴᴛ •', callback_data='bot_count')],
+        [InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')],
         [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url=UPDATE_CHANNEL)],
-        [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot'),
-         InlineKeyboardButton(text='• ʙᴏᴛ ᴄᴏᴜɴᴛ •', callback_data='bot_count'),
-         InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')]
     ]
 )
 
@@ -322,14 +322,13 @@ async def handle_clone_token(bot, message):
 
         clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
-        @clone_bot.on_message(filters.private & ~filters.me)
-        async def clone_reply(client, update):
+        @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
+        async def clone_start(client, update):
             clone_data = await db.get_clone(token)
             if not clone_data or not clone_data['active']:
                 logger.warning(f"Clone @{bot_info.username} is inactive or not found")
                 return
             
-            # Update connected users in database
             user_id = update.from_user.id
             if user_id not in clone_data.get('connected_users', []):
                 await db.clones.update_one(
@@ -338,7 +337,33 @@ async def handle_clone_token(bot, message):
                 )
                 logger.info(f"User {user_id} added to connected_users for @{bot_info.username}")
 
-            # React instead of replying
+            clone_buttons = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+                [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
+                [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+            ])
+            await update.reply_text(
+                text=CLONE_START_TEXT.format(bot_info.username),
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                reply_markup=clone_buttons
+            )
+            logger.info(f"Start command processed for clone @{bot_info.username} by user {update.from_user.id}")
+
+        @clone_bot.on_message(filters.private & ~filters.command(["start"]) & ~filters.me)
+        async def clone_reply(client, update):
+            clone_data = await db.get_clone(token)
+            if not clone_data or not clone_data['active']:
+                logger.warning(f"Clone @{bot_info.username} is inactive or not found")
+                return
+            
+            user_id = update.from_user.id
+            if user_id not in clone_data.get('connected_users', []):
+                await db.clones.update_one(
+                    {'_id': clone_data['_id']},
+                    {'$push': {'connected_users': user_id}}
+                )
+                logger.info(f"User {user_id} added to connected_users for @{bot_info.username}")
+
             await reaction_manager.add_reaction(client, update)
 
         @clone_bot.on_message(filters.group | filters.channel)
@@ -421,7 +446,34 @@ async def activate_clones():
                     in_memory=True
                 )
                 
-                @clone_bot.on_message(filters.private & ~filters.me)
+                @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
+                async def clone_start(client, update):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    user_id = update.from_user.id
+                    if user_id not in clone_data.get('connected_users', []):
+                        await db.clones.update_one(
+                            {'_id': clone_data['_id']},
+                            {'$push': {'connected_users': user_id}}
+                        )
+                        logger.info(f"User {user_id} added to connected_users for @{clone['username']}")
+
+                    clone_buttons = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                        [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                        [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                    ])
+                    await update.reply_text(
+                        text=CLONE_START_TEXT.format(clone['username']),
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        reply_markup=clone_buttons
+                    )
+                    logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id}")
+
+                @clone_bot.on_message(filters.private & ~filters.command(["start"]) & ~filters.me)
                 async def clone_reply(client, update):
                     clone_data = await db.get_clone(clone['token'])
                     if not clone_data or not clone_data['active']:
