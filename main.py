@@ -1,4 +1,3 @@
-
 import os
 import time
 import asyncio
@@ -66,9 +65,7 @@ async def send_msg(user_id, message):
         return 200, None
     except FloodWait as e:
         await asyncio.sleep(e.value)
-        return send_msg(user_id, message)
-    except (InputUserDeactivated, UserIsBlocked):
-        return 400, f"{user_id} : error\n"
+        return await send_msg(user_id, message)
     except Exception as e:
         return 500, f"{user_id} : {str(e)}\n"
 
@@ -92,6 +89,16 @@ async def get_fsub(bot, message):
         return False
     else:
         return True
+
+# Smart reaction handler with rate limit handling
+async def smart_react(client, msg):
+    try:
+        await client.react(msg.chat.id, msg.id, choice(EMOJIS))
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await smart_react(client, msg)
+    except Exception as e:
+        print(f"Reaction error: {str(e)}")
 
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
@@ -219,7 +226,12 @@ async def handle_clone_token(bot, message):
 
     try:
         temp_client = Client(name="temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
-        await temp_client.start()
+        try:
+            await temp_client.start()
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            await temp_client.start()
+        
         bot_info = await temp_client.get_me()
         await temp_client.stop()
 
@@ -253,18 +265,15 @@ async def handle_clone_token(bot, message):
 
         @clone_bot.on_message(filters.group | filters.channel)
         async def clone_reaction(client, msg):
+            clone_data = await db.get_clone(token)
+            if not clone_data or not clone_data['active']:
+                return
+            
             try:
-                # Check if bot is still in the channel or active
-                clone_data = await db.get_clone(token)
-                if not clone_data or not clone_data['active']:
-                    return
-                
-                # Check if bot is in the chat
                 await client.get_chat_member(msg.chat.id, "me")
-                await msg.react(choice(EMOJIS))
+                asyncio.create_task(smart_react(client, msg))  # Async reaction
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
             except (UserNotParticipant, ChatAdminRequired):
-                # If bot is not in chat, deactivate it
                 await db.toggle_clone(clone_data['_id'], False)
                 print(f"Bot @{bot_info.username} disconnected from {msg.chat.id}")
             except Exception as e:
@@ -272,6 +281,8 @@ async def handle_clone_token(bot, message):
         
         asyncio.create_task(clone_bot.start())
 
+    except FloodWait as e:
+        await processing_msg.edit(f"⏳ Please wait {e.value} seconds due to Telegram flood limits and try again.")
     except Exception as e:
         await processing_msg.edit(f"❌ Failed to clone bot: {str(e)}")
 
@@ -283,7 +294,9 @@ async def clone_bot_callback(bot, query):
 async def my_bots_callback(bot, query):
     clones = await db.get_user_clones(query.from_user.id)
     if not clones:
-        await query.message.edit_text("You haven't cloned any bots yet!")
+        current_text = query.message.text or ""
+        if current_text != "You haven't cloned any bots yet!":
+            await query.message.edit_text("You haven't cloned any bots yet!")
         return
 
     buttons = []
@@ -291,7 +304,6 @@ async def my_bots_callback(bot, query):
     for clone in clones:
         if clone['username'] not in seen_usernames:
             try:
-                # Check if bot is still accessible
                 temp_client = Client(name=f"check_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, in_memory=True)
                 await temp_client.start()
                 await temp_client.get_me()
@@ -304,17 +316,16 @@ async def my_bots_callback(bot, query):
                 ])
                 seen_usernames.add(clone['username'])
             except Exception:
-                # If bot is deleted or inaccessible, remove from DB
                 await db.clones.delete_one({'_id': clone['_id']})
                 print(f"Removed deleted bot @{clone['username']} from DB")
                 continue
 
-    if not buttons:
-        await query.message.edit_text("No active bots found!")
-    else:
+    new_text = MY_BOTS_TEXT if buttons else "No active bots found!"
+    current_text = query.message.text or ""
+    if current_text != new_text or not buttons:
         await query.message.edit_text(
-            MY_BOTS_TEXT,
-            reply_markup=InlineKeyboardMarkup(buttons)
+            new_text,
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None
         )
 
 @Bot.on_callback_query(filters.regex(r"toggle_(.+)"))
@@ -344,11 +355,8 @@ async def delete_clone_callback(bot, query):
 
 # Reaction handling for main bot
 @Bot.on_message(filters.group | filters.channel)
-async def send_reaction(_, msg: Message):
-    try:
-        await msg.react(choice(EMOJIS))
-    except:
-        pass
+async def send_reaction(bot, msg: Message):
+    asyncio.create_task(smart_react(bot, msg))
 
 # Activate clones on startup
 async def activate_clones():
@@ -379,18 +387,15 @@ async def activate_clones():
 
                 @clone_bot.on_message(filters.group | filters.channel)
                 async def clone_reaction(client, msg):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        return
+                    
                     try:
-                        # Check if bot is still in the channel or active
-                        clone_data = await db.get_clone(clone['token'])
-                        if not clone_data or not clone_data['active']:
-                            return
-                        
-                        # Check if bot is in the chat
                         await client.get_chat_member(msg.chat.id, "me")
-                        await msg.react(choice(EMOJIS))
+                        asyncio.create_task(smart_react(client, msg))
                         await db.update_connected_chats(clone['_id'], msg.chat.id)
                     except (UserNotParticipant, ChatAdminRequired):
-                        # If bot is not in chat, deactivate it
                         await db.toggle_clone(clone['_id'], False)
                         print(f"Bot @{clone['username']} disconnected from {msg.chat.id}")
                     except Exception as e:
