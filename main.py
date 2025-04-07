@@ -90,8 +90,6 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
-CLONE_START_TEXT = "<b>@{0}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
-
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Send your bot token to create a clone of me!
 Your clone will:
@@ -201,9 +199,9 @@ async def stats(bot, update):
         quote=True,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
-    logger.info(f"Stats command executed: Users={total_users}, Clones={total_clones}, Connected Users={len(total_connected_users)}")
+    logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}, Connected Users={len(total_connected_users)}")
 
-@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
+@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER))
 async def broadcast(bot, update):
     broadcast_ids = {}
     all_users = await db.get_all_users()
@@ -321,7 +319,7 @@ async def handle_clone_token(bot, message):
 
         clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
-        @clone_bot.on_message(filters.private)
+        @clone_bot.on_message(filters.private & ~filters.me)
         async def clone_reply(client, update):
             clone_data = await db.get_clone(token)
             if not clone_data or not clone_data['active']:
@@ -379,26 +377,27 @@ async def clone_bot_callback(bot, query):
 
 @Bot.on_callback_query(filters.regex("bot_count"))
 async def bot_count_callback(bot, query):
-    total_clones = await db.total_clones_count()
-    await query.message.reply(f"Total Cloned Bots: {total_clones}")
-    logger.info(f"Bot count requested by {query.from_user.id}: {total_clones} clones")
+    user_id = query.from_user.id
+    total_clones = await db.clones.count_documents({'user_id': user_id})
+    await query.message.reply(f"Your Cloned Bots: {total_clones}")
+    logger.info(f"Bot count requested by {user_id}: {total_clones} clones")
 
 @Bot.on_callback_query(filters.regex("disconnect_all"))
 async def disconnect_all_callback(bot, query):
-    # Fetch all clones and delete them from the database
-    all_clones = await db.get_all_clones()
+    user_id = query.from_user.id
+    all_clones = await db.clones.find({'user_id': user_id}).to_list(length=None)
     disconnected_count = 0
     
-    # Delete all clones at once
-    result = await db.clones.delete_many({})
+    # Delete all clones for this user
+    result = await db.clones.delete_many({'user_id': user_id})
     disconnected_count = result.deleted_count
     
     # Log each bot that was disconnected
     for clone in all_clones:
-        logger.info(f"Bot @{clone['username']} disconnected and removed from database by {query.from_user.id}")
+        logger.info(f"Bot @{clone['username']} disconnected and removed from database by {user_id}")
 
-    await query.message.reply(f"Disconnected {disconnected_count} bots successfully!")
-    logger.info(f"All bots disconnected by {query.from_user.id}: {disconnected_count} bots affected")
+    await query.message.reply(f"Disconnected {disconnected_count} of your bots successfully!")
+    logger.info(f"All bots disconnected by {user_id}: {disconnected_count} bots affected")
 
 # Reaction handling for main bot
 @Bot.on_message(filters.group | filters.channel)
@@ -419,7 +418,7 @@ async def activate_clones():
                     in_memory=True
                 )
                 
-                @clone_bot.on_message(filters.private)
+                @clone_bot.on_message(filters.private & ~filters.me)
                 async def clone_reply(client, update):
                     clone_data = await db.get_clone(clone['token'])
                     if not clone_data or not clone_data['active']:
