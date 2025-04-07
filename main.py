@@ -3,6 +3,7 @@ import time
 import asyncio
 import datetime
 import aiofiles
+import logging
 from random import choice
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
@@ -10,8 +11,20 @@ from pyrogram.errors import *
 from database import Database
 from config import *
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Database initialization
 db = Database(DATABASE_URL, "autoreactionbot")
+logger.info("Database initialized")
 
 # Bot setup with in-memory storage
 Bot = Client(
@@ -62,11 +75,14 @@ START_BUTTONS = InlineKeyboardMarkup(
 async def send_msg(user_id, message):
     try:
         await message.copy(chat_id=user_id)
+        logger.info(f"Message sent to user {user_id}")
         return 200, None
     except FloodWait as e:
+        logger.warning(f"Flood wait of {e.value} seconds for user {user_id}")
         await asyncio.sleep(e.value)
         return await send_msg(user_id, message)
     except Exception as e:
+        logger.error(f"Error sending message to {user_id}: {str(e)}")
         return 500, f"{user_id} : {str(e)}\n"
 
 async def get_fsub(bot, message):
@@ -74,6 +90,8 @@ async def get_fsub(bot, message):
     user_id = message.from_user.id
     try:
         await bot.get_chat_member(target_channel_id, user_id)
+        logger.info(f"User {user_id} is subscribed to channel {target_channel_id}")
+        return True
     except UserNotParticipant:
         channel_link = (await bot.get_chat(target_channel_id)).invite_link
         keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]]
@@ -86,19 +104,23 @@ async def get_fsub(bot, message):
             reply_markup=InlineKeyboardMarkup(keyboard),
             link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
+        logger.info(f"User {user_id} not subscribed to channel {target_channel_id}")
         return False
-    else:
-        return True
+    except Exception as e:
+        logger.error(f"Error checking subscription for {user_id}: {str(e)}")
+        return False
 
 # Smart reaction handler with rate limit handling
 async def smart_react(client, msg):
     try:
-        await client.react(msg.chat.id, msg.id, choice(EMOJIS))
+        await client.send_reaction(msg.chat.id, msg.id, choice(EMOJIS))
+        logger.info(f"Reaction sent to message {msg.id} in chat {msg.chat.id}")
     except FloodWait as e:
+        logger.warning(f"Flood wait of {e.value} seconds for reaction in chat {msg.chat.id}")
         await asyncio.sleep(e.value)
         await smart_react(client, msg)
     except Exception as e:
-        print(f"Reaction error: {str(e)}")
+        logger.error(f"Reaction error in chat {msg.chat.id}: {str(e)}")
 
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
@@ -106,6 +128,7 @@ async def start(bot, update):
     if not await db.is_user_exist(update.from_user.id):
         await db.add_user(update.from_user.id)
         await bot.send_message(LOG_CHANNEL, LOG_TEXT.format(update.from_user.id, update.from_user.mention))
+        logger.info(f"New user added: {update.from_user.id}")
     
     is_subscribed = await get_fsub(bot, update)
     if not is_subscribed:
@@ -116,6 +139,7 @@ async def start(bot, update):
         link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=START_BUTTONS
     )
+    logger.info(f"Start command processed for user {update.from_user.id}")
 
 @Bot.on_message(filters.private & filters.command("users") & filters.user(BOT_OWNER))
 async def users(bot, update):
@@ -126,6 +150,7 @@ async def users(bot, update):
         quote=True,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
+    logger.info(f"Users command executed by owner: Total users = {total_users}")
 
 @Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
 async def stats(bot, update):
@@ -147,6 +172,7 @@ async def stats(bot, update):
         quote=True,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
+    logger.info(f"Stats command executed: Users={total_users}, Clones={total_clones}, Chats={total_chats}")
 
 @Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
 async def broadcast(bot, update):
@@ -168,6 +194,7 @@ async def broadcast(bot, update):
             clone_client = Client(name=f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, in_memory=True)
             await clone_client.start()
             clone_clients.append(clone_client)
+            logger.info(f"Broadcast clone client started: @{clone['username']}")
 
     async with aiofiles.open('broadcast.txt', 'w') as broadcast_log_file:
         async for user in all_users:
@@ -196,6 +223,7 @@ async def broadcast(bot, update):
                     done += 1
                     broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
             await clone_client.stop()
+            logger.info(f"Broadcast clone client stopped: {clone_client.name}")
 
     completed_in = datetime.timedelta(seconds=int(time.time() - start_time))
     await asyncio.sleep(3)
@@ -211,17 +239,19 @@ async def broadcast(bot, update):
             caption=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users + done}.\nDone: {done}, Success: {success}, Failed: {failed}"
         )
     os.remove('broadcast.txt')
+    logger.info(f"Broadcast completed: Done={done}, Success={success}, Failed={failed}")
 
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
     token = message.text
     processing_msg = await message.reply("⏳ Processing your clone request...")
-    
-    # Check if token is already cloned
+    logger.info(f"Clone request received for token: {token[:10]}...")
+
     existing_clone = await db.get_clone(token)
     if existing_clone:
         await processing_msg.edit(f"❌ This bot token is already cloned as @{existing_clone['username']}!")
+        logger.warning(f"Duplicate clone attempt with token: {token[:10]}...")
         return
 
     try:
@@ -229,11 +259,13 @@ async def handle_clone_token(bot, message):
         try:
             await temp_client.start()
         except FloodWait as e:
+            logger.warning(f"Flood wait of {e.value} seconds for cloning with token: {token[:10]}...")
             await asyncio.sleep(e.value)
             await temp_client.start()
         
         bot_info = await temp_client.get_me()
         await temp_client.stop()
+        logger.info(f"Bot info retrieved: @{bot_info.username}")
 
         clone_data = await db.add_clone(message.from_user.id, token, bot_info.username)
         
@@ -247,6 +279,7 @@ async def handle_clone_token(bot, message):
             f"✅ Bot cloned successfully!\n\nUsername: @{bot_info.username}\nParent: @{BOT_USERNAME}",
             reply_markup=clone_buttons
         )
+        logger.info(f"Bot cloned successfully: @{bot_info.username}")
 
         clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
@@ -262,33 +295,39 @@ async def handle_clone_token(bot, message):
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
                 reply_markup=clone_buttons
             )
+            logger.info(f"Start command processed for clone @{bot_info.username} by user {update.from_user.id}")
 
         @clone_bot.on_message(filters.group | filters.channel)
         async def clone_reaction(client, msg):
             clone_data = await db.get_clone(token)
             if not clone_data or not clone_data['active']:
+                logger.warning(f"Clone @{bot_info.username} is inactive or not found")
                 return
             
             try:
                 await client.get_chat_member(msg.chat.id, "me")
-                asyncio.create_task(smart_react(client, msg))  # Async reaction
+                asyncio.create_task(smart_react(client, msg))
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
             except (UserNotParticipant, ChatAdminRequired):
                 await db.toggle_clone(clone_data['_id'], False)
-                print(f"Bot @{bot_info.username} disconnected from {msg.chat.id}")
+                logger.info(f"Bot @{bot_info.username} disconnected from {msg.chat.id}")
             except Exception as e:
-                print(f"Error in reaction for @{bot_info.username}: {str(e)}")
+                logger.error(f"Error in reaction for @{bot_info.username}: {str(e)}")
         
         asyncio.create_task(clone_bot.start())
+        logger.info(f"Clone bot started: @{bot_info.username}")
 
     except FloodWait as e:
         await processing_msg.edit(f"⏳ Please wait {e.value} seconds due to Telegram flood limits and try again.")
+        logger.warning(f"Flood wait error during cloning: {e.value} seconds")
     except Exception as e:
         await processing_msg.edit(f"❌ Failed to clone bot: {str(e)}")
+        logger.error(f"Failed to clone bot with token {token[:10]}...: {str(e)}")
 
 @Bot.on_callback_query(filters.regex("clone_bot"))
 async def clone_bot_callback(bot, query):
     await query.message.reply(CLONE_TEXT)
+    logger.info(f"Clone bot callback triggered by {query.from_user.id}")
 
 @Bot.on_callback_query(filters.regex("my_bots"))
 async def my_bots_callback(bot, query):
@@ -297,6 +336,7 @@ async def my_bots_callback(bot, query):
         current_text = query.message.text or ""
         if current_text != "You haven't cloned any bots yet!":
             await query.message.edit_text("You haven't cloned any bots yet!")
+        logger.info(f"No clones found for user {query.from_user.id}")
         return
 
     buttons = []
@@ -317,7 +357,7 @@ async def my_bots_callback(bot, query):
                 seen_usernames.add(clone['username'])
             except Exception:
                 await db.clones.delete_one({'_id': clone['_id']})
-                print(f"Removed deleted bot @{clone['username']} from DB")
+                logger.info(f"Removed deleted bot @{clone['username']} from DB")
                 continue
 
     new_text = MY_BOTS_TEXT if buttons else "No active bots found!"
@@ -327,6 +367,7 @@ async def my_bots_callback(bot, query):
             new_text,
             reply_markup=InlineKeyboardMarkup(buttons) if buttons else None
         )
+    logger.info(f"My bots list updated for user {query.from_user.id}: {len(buttons)} active bots")
 
 @Bot.on_callback_query(filters.regex(r"toggle_(.+)"))
 async def toggle_clone_callback(bot, query):
@@ -337,9 +378,11 @@ async def toggle_clone_callback(bot, query):
         await db.toggle_clone(clone_id, new_status)
         await query.answer(f"Bot {'activated' if new_status else 'deactivated'}!")
         await my_bots_callback(bot, query)
+        logger.info(f"Bot @{clone['username']} toggled to {'active' if new_status else 'inactive'} by {query.from_user.id}")
     else:
         await query.answer("Bot not found!")
         await my_bots_callback(bot, query)
+        logger.warning(f"Toggle attempt on non-existent bot ID: {clone_id}")
 
 @Bot.on_callback_query(filters.regex(r"delete_(.+)"))
 async def delete_clone_callback(bot, query):
@@ -349,9 +392,11 @@ async def delete_clone_callback(bot, query):
         await db.clones.delete_one({'_id': clone_id})
         await query.answer(f"Bot @{clone['username']} deleted successfully!")
         await my_bots_callback(bot, query)
+        logger.info(f"Bot @{clone['username']} deleted by {query.from_user.id}")
     else:
         await query.answer("Bot not found or already deleted!")
         await my_bots_callback(bot, query)
+        logger.warning(f"Delete attempt on non-existent bot ID: {clone_id}")
 
 # Reaction handling for main bot
 @Bot.on_message(filters.group | filters.channel)
@@ -384,11 +429,13 @@ async def activate_clones():
                         link_preview_options=LinkPreviewOptions(is_disabled=True),
                         reply_markup=clone_buttons
                     )
+                    logger.info(f"Start command processed for clone @{clone['username']} by {update.from_user.id}")
 
                 @clone_bot.on_message(filters.group | filters.channel)
                 async def clone_reaction(client, msg):
                     clone_data = await db.get_clone(clone['token'])
                     if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
                         return
                     
                     try:
@@ -397,19 +444,19 @@ async def activate_clones():
                         await db.update_connected_chats(clone['_id'], msg.chat.id)
                     except (UserNotParticipant, ChatAdminRequired):
                         await db.toggle_clone(clone['_id'], False)
-                        print(f"Bot @{clone['username']} disconnected from {msg.chat.id}")
+                        logger.info(f"Bot @{clone['username']} disconnected from {msg.chat.id}")
                     except Exception as e:
-                        print(f"Error in reaction for @{clone['username']}: {str(e)}")
+                        logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
                 
                 asyncio.create_task(clone_bot.start())
-                print(f"Started clone bot: @{clone['username']}")
+                logger.info(f"Clone bot started: @{clone['username']}")
             except Exception as e:
-                print(f"Failed to start clone bot @{clone['username']}: {str(e)}")
+                logger.error(f"Failed to start clone bot @{clone['username']}: {str(e)}")
                 await db.toggle_clone(clone['_id'], False)
 
 async def main():
     await Bot.start()
-    print("Main Bot Started!")
+    logger.info("Main Bot Started!")
     await activate_clones()
     await asyncio.Future()  # Keep the bot running
 
