@@ -42,8 +42,8 @@ CLONE_TEXT = """<b>Clone Your Bot</b>
 Send your bot token to create a clone of me!
 Your clone will:
 - Work exactly like me
--Step 1 Have an 'Add to Group/Channel' button
-- Step 2 Be manageable from 'My Bots' section"""
+- Have an 'Add to Group/Channel' button
+- Be manageable from 'My Bots' section"""
 
 MY_BOTS_TEXT = """<b>Your Cloned Bots</b>
 Here are all your active bot clones:"""
@@ -99,6 +99,37 @@ async def get_fsub(bot, message):
     else:
         return True
 
+# Activate clones on startup
+async def activate_clones():
+    all_clones = await db.get_all_clones()
+    for clone in all_clones:
+        if clone['active']:
+            clone_bot = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH)
+            
+            @clone_bot.on_message(filters.private & filters.command(["start"]))
+            async def clone_start(client, update):
+                clone_buttons = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                    [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                    [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                ])
+                await update.reply_text(
+                    text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    reply_markup=clone_buttons
+                )
+
+            @clone_bot.on_message(filters.all)
+            async def clone_reaction(client, msg):
+                try:
+                    await msg.react(choice(EMOJIS))
+                    if msg.chat.type in ['group', 'supergroup', 'channel']:
+                        await db.update_connected_chats(clone['_id'], msg.chat.id)
+                except:
+                    pass
+            
+            asyncio.create_task(clone_bot.start())
+
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
@@ -126,6 +157,27 @@ async def users(bot, update):
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
 
+@Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
+async def stats(bot, update):
+    total_users = await db.total_users_count()
+    total_clones = await db.total_clones_count()
+    all_clones = await db.get_all_clones()
+    total_chats = 0
+    for clone in all_clones:
+        total_chats += len(clone.get('connected_chats', []))
+
+    text = (
+        f"📊 Bot Statistics\n\n"
+        f"👥 Total Users: {total_users}\n"
+        f"🤖 Total Cloned Bots: {total_clones}\n"
+        f"💬 Total Connected Chats: {total_chats}"
+    )
+    await update.reply_text(
+        text=text,
+        quote=True,
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+
 @Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
 async def broadcast(bot, update):
     broadcast_ids = {}
@@ -139,8 +191,7 @@ async def broadcast(bot, update):
     success = 0
     broadcast_ids["broadcast"] = {"total": total_users, "current": done, "failed": failed, "success": success}
 
-    # Include users from all cloned bots
-    all_clones = await db.clones.find({}).to_list(length=None)
+    all_clones = await db.get_all_clones()
     clone_clients = []
     for clone in all_clones:
         if clone['active']:
@@ -149,7 +200,6 @@ async def broadcast(bot, update):
             clone_clients.append(clone_client)
 
     async with aiofiles.open('broadcast.txt', 'w') as broadcast_log_file:
-        # Broadcast to parent bot users
         async for user in all_users:
             sts, msg = await send_msg(user_id=int(user['id']), message=broadcast_msg)
             if msg is not None:
@@ -163,7 +213,6 @@ async def broadcast(bot, update):
             done += 1
             broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
 
-        # Broadcast to clone bot users
         for clone_client in clone_clients:
             async for dialog in clone_client.get_dialogs():
                 if dialog.chat.type in ['private']:
@@ -199,16 +248,13 @@ async def handle_clone_token(bot, message):
     token = message.text
     processing_msg = await message.reply("⏳ Processing your clone request...")
     try:
-        # Verify token by creating temporary client
         temp_client = Client("temp", bot_token=token, api_id=API_ID, api_hash=API_HASH)
         await temp_client.start()
         bot_info = await temp_client.get_me()
         await temp_client.stop()
 
-        # Add clone to database
         clone_data = await db.add_clone(message.from_user.id, token, bot_info.username)
         
-        # Create clone buttons
         clone_buttons = InlineKeyboardMarkup([
             [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
             [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
@@ -220,7 +266,6 @@ async def handle_clone_token(bot, message):
             reply_markup=clone_buttons
         )
 
-        # Start the cloned bot instance
         clone_bot = Client(f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH)
         
         @clone_bot.on_message(filters.private & filters.command(["start"]))
@@ -240,6 +285,8 @@ async def handle_clone_token(bot, message):
         async def clone_reaction(client, msg):
             try:
                 await msg.react(choice(EMOJIS))
+                if msg.chat.type in ['group', 'supergroup', 'channel']:
+                    await db.update_connected_chats(clone_data['_id'], msg.chat.id)
             except:
                 pass
         
@@ -256,7 +303,7 @@ async def clone_bot_callback(bot, query):
 async def my_bots_callback(bot, query):
     clones = await db.get_user_clones(query.from_user.id)
     if not clones:
-        await query.message.reply("You haven't cloned any bots yet!")
+        await query.message.edit_text("You haven't cloned any bots yet!")
         return
 
     buttons = []
@@ -303,5 +350,12 @@ async def send_reaction(_, msg: Message):
     except:
         pass
 
-# Start bot
-Bot.run()
+# Start bot and activate clones
+async def main():
+    await Bot.start()
+    await activate_clones()
+    print("Bot Started!")
+    await asyncio.Future()  # Keep the bot running
+
+if __name__ == "__main__":
+    asyncio.run(main())
