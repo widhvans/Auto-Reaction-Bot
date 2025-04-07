@@ -209,6 +209,13 @@ async def broadcast(bot, update):
 async def handle_clone_token(bot, message):
     token = message.text
     processing_msg = await message.reply("⏳ Processing your clone request...")
+    
+    # Check if token is already cloned
+    existing_clone = await db.get_clone(token)
+    if existing_clone:
+        await processing_msg.edit(f"❌ This bot token is already cloned as @{existing_clone['username']}!")
+        return
+
     try:
         temp_client = Client(name="temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         await temp_client.start()
@@ -243,13 +250,24 @@ async def handle_clone_token(bot, message):
                 reply_markup=clone_buttons
             )
 
-        @clone_bot.on_message(filters.group | filters.channel)  # React in groups and channels
+        @clone_bot.on_message(filters.group | filters.channel)
         async def clone_reaction(client, msg):
             try:
+                # Check if bot is still in the channel or active
+                clone_data = await db.get_clone(token)
+                if not clone_data or not clone_data['active']:
+                    return
+                
+                # Check if bot is in the chat
+                await client.get_chat_member(msg.chat.id, "me")
                 await msg.react(choice(EMOJIS))
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-            except:
-                pass
+            except (UserNotParticipant, ChatAdminRequired):
+                # If bot is not in chat, deactivate it
+                await db.toggle_clone(clone_data['_id'], False)
+                print(f"Bot @{bot_info.username} disconnected from {msg.chat.id}")
+            except Exception as e:
+                print(f"Error in reaction for @{bot_info.username}: {str(e)}")
         
         asyncio.create_task(clone_bot.start())
 
@@ -287,6 +305,7 @@ async def my_bots_callback(bot, query):
             except Exception:
                 # If bot is deleted or inaccessible, remove from DB
                 await db.clones.delete_one({'_id': clone['_id']})
+                print(f"Removed deleted bot @{clone['username']} from DB")
                 continue
 
     if not buttons:
@@ -323,7 +342,7 @@ async def delete_clone_callback(bot, query):
         await my_bots_callback(bot, query)
 
 # Reaction handling for main bot
-@Bot.on_message(filters.group | filters.channel)  # React in groups and channels
+@Bot.on_message(filters.group | filters.channel)
 async def send_reaction(_, msg: Message):
     try:
         await msg.react(choice(EMOJIS))
@@ -357,18 +376,30 @@ async def activate_clones():
                         reply_markup=clone_buttons
                     )
 
-                @clone_bot.on_message(filters.group | filters.channel)  # React in groups and channels
+                @clone_bot.on_message(filters.group | filters.channel)
                 async def clone_reaction(client, msg):
                     try:
+                        # Check if bot is still in the channel or active
+                        clone_data = await db.get_clone(clone['token'])
+                        if not clone_data or not clone_data['active']:
+                            return
+                        
+                        # Check if bot is in the chat
+                        await client.get_chat_member(msg.chat.id, "me")
                         await msg.react(choice(EMOJIS))
                         await db.update_connected_chats(clone['_id'], msg.chat.id)
-                    except:
-                        pass
+                    except (UserNotParticipant, ChatAdminRequired):
+                        # If bot is not in chat, deactivate it
+                        await db.toggle_clone(clone['_id'], False)
+                        print(f"Bot @{clone['username']} disconnected from {msg.chat.id}")
+                    except Exception as e:
+                        print(f"Error in reaction for @{clone['username']}: {str(e)}")
                 
                 asyncio.create_task(clone_bot.start())
                 print(f"Started clone bot: @{clone['username']}")
             except Exception as e:
                 print(f"Failed to start clone bot @{clone['username']}: {str(e)}")
+                await db.toggle_clone(clone['_id'], False)
 
 async def main():
     await Bot.start()
