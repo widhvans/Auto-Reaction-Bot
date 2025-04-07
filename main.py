@@ -30,6 +30,14 @@ START_TEXT = """<b>{},
 
 <blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
+CLONE_START_TEXT = """<b>{},
+
+ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ @{parent_bot} - ᴀ ᴘᴏᴡᴇʀꜰᴜ BUDDY ʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
+
+ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
+
+<blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
+
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Send your bot token to create a clone of me!
 Your clone will:
@@ -130,7 +138,17 @@ async def broadcast(bot, update):
     success = 0
     broadcast_ids["broadcast"] = {"total": total_users, "current": done, "failed": failed, "success": success}
 
+    # Include users from all cloned bots
+    all_clones = await db.clones.find({}).to_list(length=None)
+    clone_clients = []
+    for clone in all_clones:
+        if clone['active']:
+            clone_client = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH)
+            await clone_client.start()
+            clone_clients.append(clone_client)
+
     async with aiofiles.open('broadcast.txt', 'w') as broadcast_log_file:
+        # Broadcast to parent bot users
         async for user in all_users:
             sts, msg = await send_msg(user_id=int(user['id']), message=broadcast_msg)
             if msg is not None:
@@ -144,18 +162,33 @@ async def broadcast(bot, update):
             done += 1
             broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
 
+        # Broadcast to clone bot users
+        for clone_client in clone_clients:
+            async for dialog in clone_client.get_dialogs():
+                if dialog.chat.type in ['private']:
+                    sts, msg = await send_msg(user_id=dialog.chat.id, message=broadcast_msg)
+                    if msg is not None:
+                        await broadcast_log_file.write(msg)
+                    if sts == 200:
+                        success += 1
+                    else:
+                        failed += 1
+                    done += 1
+                    broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
+            await clone_client.stop()
+
     completed_in = datetime.timedelta(seconds=int(time.time() - start_time))
     await asyncio.sleep(3)
     await out.delete()
     if failed == 0:
         await update.reply_text(
-            text=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users}.\nDone: {done}, Success: {success}, Failed: {failed}",
+            text=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users + done}.\nDone: {done}, Success: {success}, Failed: {failed}",
             quote=True
         )
     else:
         await update.reply_document(
             document='broadcast.txt',
-            caption=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users}.\nDone: {done}, Success: {success}, Failed: {failed}"
+            caption=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users + done}.\nDone: {done}, Success: {success}, Failed: {failed}"
         )
     os.remove('broadcast.txt')
 
@@ -163,6 +196,7 @@ async def broadcast(bot, update):
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
     token = message.text
+    processing_msg = await message.reply("⏳ Processing your clone request...")
     try:
         # Verify token by creating temporary client
         temp_client = Client("temp", bot_token=token, api_id=API_ID, api_hash=API_HASH)
@@ -180,23 +214,38 @@ async def handle_clone_token(bot, message):
             [InlineKeyboardButton("Parent Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
         ])
 
-        await message.reply(
+        await processing_msg.edit(
             f"✅ Bot cloned successfully!\n\nUsername: @{bot_info.username}\nParent: @{BOT_USERNAME}",
             reply_markup=clone_buttons
         )
 
         # Start the cloned bot instance
         clone_bot = Client(f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+        
+        @clone_bot.on_message(filters.private & filters.command(["start"]))
+        async def clone_start(client, update):
+            clone_buttons = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+                [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
+                [InlineKeyboardButton("Parent Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+            ])
+            await update.reply_text(
+                text=CLONE_START_TEXT.format(update.from_user.mention, parent_bot=BOT_USERNAME),
+                disable_web_page_preview=True,
+                reply_markup=clone_buttons
+            )
+
         @clone_bot.on_message(filters.all)
         async def clone_reaction(client, msg):
             try:
                 await msg.react(choice(EMOJIS))
             except:
                 pass
+        
         asyncio.create_task(clone_bot.start())
 
     except Exception as e:
-        await message.reply(f"❌ Failed to clone bot: {str(e)}")
+        await processing_msg.edit(f"❌ Failed to clone bot: {str(e)}")
 
 @Bot.on_callback_query(filters.regex("clone_bot"))
 async def clone_bot_callback(bot, query):
@@ -217,7 +266,7 @@ async def my_bots_callback(bot, query):
             InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
         ])
 
-    await query.message.reply(
+    await query.message.edit_text(
         MY_BOTS_TEXT,
         reply_markup=InlineKeyboardMarkup(buttons)
     )
@@ -234,8 +283,9 @@ async def toggle_clone_callback(bot, query):
 @Bot.on_callback_query(filters.regex(r"delete_(.+)"))
 async def delete_clone_callback(bot, query):
     clone_id = query.data.split("_")[1]
+    clone = await db.clones.find_one({'_id': clone_id})
     await db.clones.delete_one({'_id': clone_id})
-    await query.answer("Bot deleted!")
+    await query.answer(f"Bot @{clone['username']} deleted successfully!")
     await my_bots_callback(bot, query)
 
 # Reaction handling
