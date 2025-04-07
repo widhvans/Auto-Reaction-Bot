@@ -97,6 +97,9 @@ Your clone will:
 - Have an 'Add to Group/Channel' button
 - Be manageable from here"""
 
+# Fallback for UPDATE_CHANNEL if not defined in config.py
+UPDATE_CHANNEL = getattr(globals().get('config', {}), 'UPDATE_CHANNEL', 'https://telegram.me/StreamExplainer')
+
 START_BUTTONS = InlineKeyboardMarkup(
     [
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
@@ -201,7 +204,7 @@ async def stats(bot, update):
     )
     logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}, Connected Users={len(total_connected_users)}")
 
-@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER))
+@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
 async def broadcast(bot, update):
     broadcast_ids = {}
     all_users = await db.get_all_users()
