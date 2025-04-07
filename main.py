@@ -35,8 +35,8 @@ Bot = Client(
     in_memory=True
 )
 
-# Valid Telegram reaction emojis
-VALID_EMOJIS = ["👍", "👎", "❤", "🔥", "🥳", "👏", "😁", "😢", "😍", "🤯", "😱", "🤬"]
+# Positive Telegram reaction emojis only
+VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
 
 # Smart reaction manager
 class ReactionManager:
@@ -101,10 +101,9 @@ Your clone will:
 
 START_BUTTONS = InlineKeyboardMarkup(
     [
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘs ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
-        [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url='https://telegram.me/StreamExplainer'),
-         InlineKeyboardButton(text='• ꜱᴜᴩᴩᴏʀᴛ •', url='https://telegram.me/TechifySupport')],
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
+        [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url=UPDATE_CHANNEL)],
         [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot'),
          InlineKeyboardButton(text='• ʙᴏᴛ ᴄᴏᴜɴᴛ •', callback_data='bot_count'),
          InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')]
@@ -338,21 +337,8 @@ async def handle_clone_token(bot, message):
                 )
                 logger.info(f"User {user_id} added to connected_users for @{bot_info.username}")
 
-            if update.text == "/start":
-                clone_buttons = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
-                    [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-                    [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
-                ])
-                await update.reply_text(
-                    text=CLONE_START_TEXT.format(bot_info.username),
-                    link_preview_options=LinkPreviewOptions(is_disabled=True),
-                    reply_markup=clone_buttons
-                )
-                logger.info(f"Start command processed for clone @{bot_info.username} by user {update.from_user.id}")
-            else:
-                await update.reply_text(f"Received: {update.text}")
-                logger.info(f"Message '{update.text}' processed for clone @{bot_info.username} by user {update.from_user.id}")
+            # React instead of replying
+            await reaction_manager.add_reaction(client, update)
 
         @clone_bot.on_message(filters.group | filters.channel)
         async def clone_reaction(client, msg):
@@ -448,21 +434,7 @@ async def activate_clones():
                         )
                         logger.info(f"User {user_id} added to connected_users for @{clone['username']}")
 
-                    if update.text == "/start":
-                        clone_buttons = InlineKeyboardMarkup([
-                            [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
-                            [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
-                            [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
-                        ])
-                        await update.reply_text(
-                            text=CLONE_START_TEXT.format(clone['username']),
-                            link_preview_options=LinkPreviewOptions(is_disabled=True),
-                            reply_markup=clone_buttons
-                        )
-                        logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id}")
-                    else:
-                        await update.reply_text(f"Received: {update.text}")
-                        logger.info(f"Message '{update.text}' processed for clone @{clone['username']} by user {update.from_user.id}")
+                    await reaction_manager.add_reaction(client, update)
 
                 @clone_bot.on_message(filters.group | filters.channel)
                 async def clone_reaction(client, msg):
