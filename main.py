@@ -29,11 +29,7 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
-CLONE_START_TEXT = """<b>@{parent_bot}
-
-ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
-
-ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"""
+CLONE_START_TEXT = "<b>@{0}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Send your bot token to create a clone of me!
@@ -247,12 +243,11 @@ async def handle_clone_token(bot, message):
                 reply_markup=clone_buttons
             )
 
-        @clone_bot.on_message(filters.all)
+        @clone_bot.on_message(filters.group | filters.channel)  # React in groups and channels
         async def clone_reaction(client, msg):
             try:
                 await msg.react(choice(EMOJIS))
-                if msg.chat.type in ['group', 'supergroup', 'channel']:
-                    await db.update_connected_chats(clone_data['_id'], msg.chat.id)
+                await db.update_connected_chats(clone_data['_id'], msg.chat.id)
             except:
                 pass
         
@@ -267,27 +262,40 @@ async def clone_bot_callback(bot, query):
 
 @Bot.on_callback_query(filters.regex("my_bots"))
 async def my_bots_callback(bot, query):
-    # Fetch fresh data from the database every time
     clones = await db.get_user_clones(query.from_user.id)
     if not clones:
         await query.message.edit_text("You haven't cloned any bots yet!")
         return
 
     buttons = []
-    seen_usernames = set()  # To avoid duplicates
+    seen_usernames = set()
     for clone in clones:
         if clone['username'] not in seen_usernames:
-            status = "✅" if clone['active'] else "❌"
-            buttons.append([
-                InlineKeyboardButton(f"{status} @{clone['username']}", callback_data=f"toggle_{clone['_id']}"),
-                InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
-            ])
-            seen_usernames.add(clone['username'])
+            try:
+                # Check if bot is still accessible
+                temp_client = Client(name=f"check_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, in_memory=True)
+                await temp_client.start()
+                await temp_client.get_me()
+                await temp_client.stop()
+                
+                status = "✅" if clone['active'] else "❌"
+                buttons.append([
+                    InlineKeyboardButton(f"{status} @{clone['username']}", callback_data=f"toggle_{clone['_id']}"),
+                    InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
+                ])
+                seen_usernames.add(clone['username'])
+            except Exception:
+                # If bot is deleted or inaccessible, remove from DB
+                await db.clones.delete_one({'_id': clone['_id']})
+                continue
 
-    await query.message.edit_text(
-        MY_BOTS_TEXT,
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    if not buttons:
+        await query.message.edit_text("No active bots found!")
+    else:
+        await query.message.edit_text(
+            MY_BOTS_TEXT,
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
 
 @Bot.on_callback_query(filters.regex(r"toggle_(.+)"))
 async def toggle_clone_callback(bot, query):
@@ -300,6 +308,7 @@ async def toggle_clone_callback(bot, query):
         await my_bots_callback(bot, query)
     else:
         await query.answer("Bot not found!")
+        await my_bots_callback(bot, query)
 
 @Bot.on_callback_query(filters.regex(r"delete_(.+)"))
 async def delete_clone_callback(bot, query):
@@ -308,12 +317,13 @@ async def delete_clone_callback(bot, query):
     if clone:
         await db.clones.delete_one({'_id': clone_id})
         await query.answer(f"Bot @{clone['username']} deleted successfully!")
-        await my_bots_callback(bot, query)  # Refresh the list immediately
+        await my_bots_callback(bot, query)
     else:
         await query.answer("Bot not found or already deleted!")
+        await my_bots_callback(bot, query)
 
-# Reaction handling
-@Bot.on_message(filters.all)
+# Reaction handling for main bot
+@Bot.on_message(filters.group | filters.channel)  # React in groups and channels
 async def send_reaction(_, msg: Message):
     try:
         await msg.react(choice(EMOJIS))
@@ -347,12 +357,11 @@ async def activate_clones():
                         reply_markup=clone_buttons
                     )
 
-                @clone_bot.on_message(filters.all)
+                @clone_bot.on_message(filters.group | filters.channel)  # React in groups and channels
                 async def clone_reaction(client, msg):
                     try:
                         await msg.react(choice(EMOJIS))
-                        if msg.chat.type in ['group', 'supergroup', 'channel']:
-                            await db.update_connected_chats(clone['_id'], msg.chat.id)
+                        await db.update_connected_chats(clone['_id'], msg.chat.id)
                     except:
                         pass
                 
