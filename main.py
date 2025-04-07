@@ -35,6 +35,9 @@ Bot = Client(
     in_memory=True
 )
 
+# Valid Telegram reaction emojis
+VALID_EMOJIS = ["👍", "👎", "❤", "🔥", "🥳", "👏", "😁", "😢", "😍", "🤯", "😱", "🤬"]
+
 # Messages and buttons
 START_TEXT = """<b>{},
 
@@ -113,12 +116,16 @@ async def get_fsub(bot, message):
 # Smart reaction handler with rate limit handling
 async def smart_react(client, msg):
     try:
-        await client.send_reaction(msg.chat.id, msg.id, choice(EMOJIS))
-        logger.info(f"Reaction sent to message {msg.id} in chat {msg.chat.id}")
+        emoji = choice(VALID_EMOJIS)  # Use only valid emojis
+        await client.send_reaction(msg.chat.id, msg.id, emoji)
+        logger.info(f"Reaction {emoji} sent to message {msg.id} in chat {msg.chat.id}")
     except FloodWait as e:
         logger.warning(f"Flood wait of {e.value} seconds for reaction in chat {msg.chat.id}")
-        await asyncio.sleep(e.value)
+        await asyncio.sleep(min(e.value, 5))  # Cap wait at 5 seconds
         await smart_react(client, msg)
+    except ReactionInvalid:
+        logger.warning(f"Invalid reaction attempted in chat {msg.chat.id}, retrying with valid emoji")
+        await smart_react(client, msg)  # Retry with valid emoji
     except Exception as e:
         logger.error(f"Reaction error in chat {msg.chat.id}: {str(e)}")
 
@@ -285,6 +292,10 @@ async def handle_clone_token(bot, message):
         
         @clone_bot.on_message(filters.private & filters.command(["start"]))
         async def clone_start(client, update):
+            if hasattr(client, '_start_handled'):  # Prevent duplicate replies
+                return
+            client._start_handled = True
+            
             clone_buttons = InlineKeyboardMarkup([
                 [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
                 [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
@@ -296,6 +307,8 @@ async def handle_clone_token(bot, message):
                 reply_markup=clone_buttons
             )
             logger.info(f"Start command processed for clone @{bot_info.username} by user {update.from_user.id}")
+            await asyncio.sleep(1)  # Reset after a short delay
+            client._start_handled = False
 
         @clone_bot.on_message(filters.group | filters.channel)
         async def clone_reaction(client, msg):
@@ -389,8 +402,10 @@ async def delete_clone_callback(bot, query):
     clone_id = query.data.split("_")[1]
     clone = await db.clones.find_one({'_id': clone_id})
     if clone:
+        processing_msg = await query.message.reply(f"⏳ Deleting @{clone['username']}...")
         await db.clones.delete_one({'_id': clone_id})
-        await query.answer(f"Bot @{clone['username']} deleted successfully!")
+        await asyncio.sleep(1)  # Smooth animation delay
+        await processing_msg.edit(f"✅ Bot @{clone['username']} deleted successfully!")
         await my_bots_callback(bot, query)
         logger.info(f"Bot @{clone['username']} deleted by {query.from_user.id}")
     else:
@@ -419,6 +434,10 @@ async def activate_clones():
                 
                 @clone_bot.on_message(filters.private & filters.command(["start"]))
                 async def clone_start(client, update):
+                    if hasattr(client, '_start_handled'):  # Prevent duplicate replies
+                        return
+                    client._start_handled = True
+                    
                     clone_buttons = InlineKeyboardMarkup([
                         [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
                         [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
@@ -430,6 +449,8 @@ async def activate_clones():
                         reply_markup=clone_buttons
                     )
                     logger.info(f"Start command processed for clone @{clone['username']} by {update.from_user.id}")
+                    await asyncio.sleep(1)  # Reset after a short delay
+                    client._start_handled = False
 
                 @clone_bot.on_message(filters.group | filters.channel)
                 async def clone_reaction(client, msg):
