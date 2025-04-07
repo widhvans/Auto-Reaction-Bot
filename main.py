@@ -49,7 +49,6 @@ class ReactionManager:
         chat_id = msg.chat.id
         current_time = time.time()
 
-        # Check rate limit for this chat
         if chat_id not in self.rate_limits:
             self.rate_limits[chat_id] = {'count': 0, 'last_reset': current_time}
         
@@ -186,9 +185,8 @@ async def stats(bot, update):
     total_users = await db.total_users_count()
     total_clones = await db.total_clones_count()
     all_clones = await db.get_all_clones()
-    total_connected_users = set()  # Use a set to avoid duplicates
+    total_connected_users = set()
 
-    # Calculate unique users interacting with clones
     for clone in all_clones:
         connected_users = clone.get('connected_users', [])
         total_connected_users.update(connected_users)
@@ -366,7 +364,6 @@ async def handle_clone_token(bot, message):
             try:
                 await client.get_chat_member(msg.chat.id, "me")
                 await reaction_manager.add_reaction(client, msg)
-                # Update connected chats in database
                 if msg.chat.id not in clone_data.get('connected_chats', []):
                     await db.clones.update_one(
                         {'_id': clone_data['_id']},
@@ -402,14 +399,18 @@ async def bot_count_callback(bot, query):
 
 @Bot.on_callback_query(filters.regex("disconnect_all"))
 async def disconnect_all_callback(bot, query):
+    # Fetch all clones and delete them from the database
     all_clones = await db.get_all_clones()
     disconnected_count = 0
-    for clone in all_clones:
-        if clone['active']:
-            await db.clones.delete_one({'_id': clone['_id']})
-            disconnected_count += 1
-            logger.info(f"Bot @{clone['username']} disconnected and removed from database by {query.from_user.id}")
     
+    # Delete all clones at once
+    result = await db.clones.delete_many({})
+    disconnected_count = result.deleted_count
+    
+    # Log each bot that was disconnected
+    for clone in all_clones:
+        logger.info(f"Bot @{clone['username']} disconnected and removed from database by {query.from_user.id}")
+
     await query.message.reply(f"Disconnected {disconnected_count} bots successfully!")
     logger.info(f"All bots disconnected by {query.from_user.id}: {disconnected_count} bots affected")
 
