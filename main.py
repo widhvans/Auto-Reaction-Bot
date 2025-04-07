@@ -38,12 +38,59 @@ Bot = Client(
 # Valid Telegram reaction emojis
 VALID_EMOJIS = ["👍", "👎", "❤", "🔥", "🥳", "👏", "😁", "😢", "😍", "🤯", "😱", "🤬"]
 
+# Smart reaction manager
+class ReactionManager:
+    def __init__(self):
+        self.rate_limits = {}  # Tracks rate limits per chat
+        self.max_reactions_per_second = 20  # Telegram's approximate limit
+        self.queue = asyncio.Queue()
+
+    async def add_reaction(self, client, msg):
+        chat_id = msg.chat.id
+        current_time = time.time()
+
+        # Check rate limit for this chat
+        if chat_id not in self.rate_limits:
+            self.rate_limits[chat_id] = {'count': 0, 'last_reset': current_time}
+        
+        if current_time - self.rate_limits[chat_id]['last_reset'] > 1:
+            self.rate_limits[chat_id] = {'count': 0, 'last_reset': current_time}
+
+        if self.rate_limits[chat_id]['count'] >= self.max_reactions_per_second:
+            await asyncio.sleep(1)  # Wait intelligently
+            self.rate_limits[chat_id] = {'count': 0, 'last_reset': time.time()}
+
+        await self.queue.put((client, msg))
+        self.rate_limits[chat_id]['count'] += 1
+
+    async def process_reactions(self):
+        while True:
+            client, msg = await self.queue.get()
+            try:
+                emoji = choice(VALID_EMOJIS)
+                await client.send_reaction(msg.chat.id, msg.id, emoji)
+                logger.info(f"Reaction {emoji} sent to message {msg.id} in chat {msg.chat.id}")
+            except FloodWait as e:
+                logger.warning(f"Flood wait of {e.value} seconds for reaction in chat {msg.chat.id}")
+                await asyncio.sleep(min(e.value, 5))
+                await self.add_reaction(client, msg)  # Retry
+            except ReactionInvalid:
+                logger.warning(f"Invalid reaction attempted in chat {msg.chat.id}, retrying")
+                await self.add_reaction(client, msg)
+            except Exception as e:
+                logger.error(f"Reaction error in chat {msg.chat.id}: {str(e)}")
+            finally:
+                self.queue.task_done()
+
+reaction_manager = ReactionManager()
+asyncio.create_task(reaction_manager.process_reactions())
+
 # Messages and buttons
 START_TEXT = """<b>{},
 
 ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
-ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
+ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴪ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
 CLONE_START_TEXT = "<b>@{0}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
@@ -113,22 +160,6 @@ async def get_fsub(bot, message):
         logger.error(f"Error checking subscription for {user_id}: {str(e)}")
         return False
 
-# Smart reaction handler with rate limit handling
-async def smart_react(client, msg):
-    try:
-        emoji = choice(VALID_EMOJIS)
-        await client.send_reaction(msg.chat.id, msg.id, emoji)
-        logger.info(f"Reaction {emoji} sent to message {msg.id} in chat {msg.chat.id}")
-    except FloodWait as e:
-        logger.warning(f"Flood wait of {e.value} seconds for reaction in chat {msg.chat.id}")
-        await asyncio.sleep(min(e.value, 5))  # Cap wait at 5 seconds
-        await smart_react(client, msg)
-    except ReactionInvalid:
-        logger.warning(f"Invalid reaction attempted in chat {msg.chat.id}, retrying with valid emoji")
-        await smart_react(client, msg)
-    except Exception as e:
-        logger.error(f"Reaction error in chat {msg.chat.id}: {str(e)}")
-
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
@@ -141,9 +172,7 @@ async def start(bot, update):
     if not is_subscribed:
         return
 
-    processing_msg = await update.reply("⏳ Loading your bot interface...")
-    await asyncio.sleep(0.5)  # Smooth opening animation
-    await processing_msg.edit(
+    await update.reply_text(
         text=START_TEXT.format(update.from_user.mention),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=START_BUTTONS
@@ -254,7 +283,7 @@ async def broadcast(bot, update):
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
     token = message.text
-    processing_msg = await message.reply("⏳ Processing your clone request...")
+    processing_msg = await message.reply("Processing your clone request...")
     logger.info(f"Clone request received for token: {token[:10]}...")
 
     existing_clone = await db.get_clone(token)
@@ -285,7 +314,7 @@ async def handle_clone_token(bot, message):
         ])
 
         await processing_msg.edit(
-            f"✅ Bot cloned successfully!\n\nUsername: @{bot_info.username}\nParent: @{BOT_USERNAME}",
+            f"✅ Bot cloned successfully!\n\nUsername: @{bot_info.username}",
             reply_markup=clone_buttons
         )
         logger.info(f"Bot cloned successfully: @{bot_info.username}")
@@ -321,7 +350,7 @@ async def handle_clone_token(bot, message):
             
             try:
                 await client.get_chat_member(msg.chat.id, "me")
-                asyncio.create_task(smart_react(client, msg))
+                await reaction_manager.add_reaction(client, msg)
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
             except (UserNotParticipant, ChatAdminRequired):
                 await db.toggle_clone(clone_data['_id'], False)
@@ -346,15 +375,12 @@ async def clone_bot_callback(bot, query):
 
 @Bot.on_callback_query(filters.regex("my_bots"))
 async def my_bots_callback(bot, query):
-    processing_msg = await query.message.reply("⏳ Loading your bots...")
-    await asyncio.sleep(0.5)  # Smooth opening animation
-    
     # Fetch fresh data from database every time
     clones = await db.get_user_clones(query.from_user.id)
     logger.info(f"Fetched clones for user {query.from_user.id}: {len(clones)} found")
 
     if not clones:
-        await processing_msg.edit("You haven't cloned any bots yet!")
+        await query.message.edit_text("You haven't cloned any bots yet!")
         logger.info(f"No clones found for user {query.from_user.id}")
         return
 
@@ -376,15 +402,15 @@ async def my_bots_callback(bot, query):
                 ])
                 seen_usernames.add(clone['username'])
                 active_bots.append(clone)
-            except Exception as e:
-                logger.warning(f"Bot @{clone['username']} is invalid or deleted: {str(e)}")
-                continue  # Skip invalid bots without deleting them here
+            except Exception:
+                logger.warning(f"Bot @{clone['username']} is invalid or deleted, skipping")
+                continue
 
     if not buttons:
-        await processing_msg.edit("No active bots found!")
+        await query.message.edit_text("No active bots found!")
         logger.info(f"No active bots found for user {query.from_user.id}")
     else:
-        await processing_msg.edit(
+        await query.message.edit_text(
             MY_BOTS_TEXT,
             reply_markup=InlineKeyboardMarkup(buttons)
         )
@@ -410,23 +436,22 @@ async def delete_clone_callback(bot, query):
     clone_id = query.data.split("_")[1]
     clone = await db.clones.find_one({'_id': clone_id})
     if clone:
-        processing_msg = await query.message.reply(f"⏳ Deleting @{clone['username']}...")
-        await asyncio.sleep(0.5)  # Smooth animation delay
+        # Immediately remove from list (frontend)
+        await query.answer(f"Bot @{clone['username']} deleted!")
+        await my_bots_callback(bot, query)  # Instant list update
         
-        # Delete only the specific clone
-        result = await db.clones.delete_one({'_id': clone_id})
-        if result.deleted_count == 1:
-            logger.info(f"Bot @{clone['username']} successfully removed from database by {query.from_user.id}")
-        else:
-            logger.warning(f"Failed to remove bot @{clone['username']} from database")
+        # Perform actual deletion in background
+        async def delete_in_background():
+            try:
+                result = await db.clones.delete_one({'_id': clone_id})
+                if result.deleted_count == 1:
+                    logger.info(f"Bot @{clone['username']} successfully removed from database by {query.from_user.id}")
+                else:
+                    logger.warning(f"Failed to remove bot @{clone['username']} from database")
+            except Exception as e:
+                logger.error(f"Error deleting bot @{clone['username']} from database: {str(e)}")
 
-        await asyncio.sleep(0.5)  # Additional delay for smoothness
-        await processing_msg.edit(f"✅ Bot @{clone['username']} deleted successfully!")
-        await asyncio.sleep(0.5)  # Final delay before refreshing
-        
-        # Refresh the list immediately
-        await my_bots_callback(bot, query)
-        logger.info(f"Bot @{clone['username']} deleted by {query.from_user.id}")
+        asyncio.create_task(delete_in_background())
     else:
         await query.answer("Bot not found or already deleted!")
         await my_bots_callback(bot, query)
@@ -435,7 +460,7 @@ async def delete_clone_callback(bot, query):
 # Reaction handling for main bot
 @Bot.on_message(filters.group | filters.channel)
 async def send_reaction(bot, msg: Message):
-    asyncio.create_task(smart_react(bot, msg))
+    await reaction_manager.add_reaction(bot, msg)
 
 # Activate clones on startup
 async def activate_clones():
@@ -480,7 +505,7 @@ async def activate_clones():
                     
                     try:
                         await client.get_chat_member(msg.chat.id, "me")
-                        asyncio.create_task(smart_react(client, msg))
+                        await reaction_manager.add_reaction(client, msg)
                         await db.update_connected_chats(clone['_id'], msg.chat.id)
                     except (UserNotParticipant, ChatAdminRequired):
                         await db.toggle_clone(clone['_id'], False)
