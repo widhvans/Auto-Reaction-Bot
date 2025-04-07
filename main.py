@@ -1,4 +1,3 @@
-
 import os
 import time
 import asyncio
@@ -156,10 +155,11 @@ async def get_fsub(bot, message):
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
-    if not await db.is_user_exist(update.from_user.id):
-        await db.add_user(update.from_user.id)
-        await bot.send_message(LOG_CHANNEL, LOG_TEXT.format(update.from_user.id, update.from_user.mention))
-        logger.info(f"New user added: {update.from_user.id}")
+    user_id = update.from_user.id
+    if not await db.is_user_exist(user_id):
+        await db.add_user(user_id)
+        await bot.send_message(LOG_CHANNEL, LOG_TEXT.format(user_id, update.from_user.mention))
+        logger.info(f"New user added: {user_id}")
     
     is_subscribed = await get_fsub(bot, update)
     if not is_subscribed:
@@ -170,7 +170,7 @@ async def start(bot, update):
         link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=START_BUTTONS
     )
-    logger.info(f"Start command processed for user {update.from_user.id}")
+    logger.info(f"Start command processed for user {user_id}")
 
 @Bot.on_message(filters.private & filters.command("users") & filters.user(BOT_OWNER))
 async def users(bot, update):
@@ -207,69 +207,71 @@ async def stats(bot, update):
     )
     logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}, Connected Users={len(total_connected_users)}")
 
+@Bot.on_message(filters.private & filters.command("total"))
+async def total(bot, update):
+    user_id = update.from_user.id
+    total_clones = await db.clones.count_documents({'user_id': user_id})
+    all_clones = await db.clones.find({'user_id': user_id}).to_list(length=None)
+    connected_users = set()
+
+    for clone in all_clones:
+        connected_users.update(clone.get('connected_users', []))
+
+    text = (
+        f"📊 Your Totals\n\n"
+        f"🤖 Total Cloned Bots: {total_clones}\n"
+        f"💬 Total Connected Users: {len(connected_users)}"
+    )
+    await update.reply_text(
+        text=text,
+        quote=True,
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+    logger.info(f"Total command executed by {user_id}: Clones={total_clones}, Connected Users={len(connected_users)}")
+
 @Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER) & filters.reply)
 async def broadcast(bot, update):
-    broadcast_ids = {}
-    all_users = await db.get_all_users()
     broadcast_msg = update.reply_to_message
     out = await update.reply_text(text="Broadcast Started!")
     start_time = time.time()
-    total_users = await db.total_users_count()
     done = 0
     failed = 0
     success = 0
-    broadcast_ids["broadcast"] = {"total": total_users, "current": done, "failed": failed, "success": success}
 
+    # Get all connected users from clones
     all_clones = await db.get_all_clones()
-    clone_clients = []
+    total_connected_users = set()
     for clone in all_clones:
-        if clone['active']:
-            clone_client = Client(name=f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, in_memory=True)
-            await clone_client.start()
-            clone_clients.append(clone_client)
-            logger.info(f"Broadcast clone client started: @{clone['username']}")
+        connected_users = clone.get('connected_users', [])
+        total_connected_users.update(connected_users)
+
+    total_users = len(total_connected_users)
+    broadcast_ids = {"total": total_users, "current": done, "failed": failed, "success": success}
 
     async with aiofiles.open('broadcast.txt', 'w') as broadcast_log_file:
-        async for user in all_users:
-            sts, msg = await send_msg(user_id=int(user['id']), message=broadcast_msg)
+        for user_id in total_connected_users:
+            sts, msg = await send_msg(user_id=user_id, message=broadcast_msg)
             if msg is not None:
                 await broadcast_log_file.write(msg)
             if sts == 200:
                 success += 1
             else:
                 failed += 1
-            if sts == 400:
-                await db.delete_user(user['id'])
             done += 1
-            broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
-
-        for clone_client in clone_clients:
-            async for dialog in clone_client.get_dialogs():
-                if dialog.chat.type in ['private']:
-                    sts, msg = await send_msg(user_id=dialog.chat.id, message=broadcast_msg)
-                    if msg is not None:
-                        await broadcast_log_file.write(msg)
-                    if sts == 200:
-                        success += 1
-                    else:
-                        failed += 1
-                    done += 1
-                    broadcast_ids["broadcast"].update({"current": done, "failed": failed, "success": success})
-            await clone_client.stop()
-            logger.info(f"Broadcast clone client stopped: {clone_client.name}")
+            broadcast_ids.update({"current": done, "failed": failed, "success": success})
 
     completed_in = datetime.timedelta(seconds=int(time.time() - start_time))
     await asyncio.sleep(3)
     await out.delete()
     if failed == 0:
         await update.reply_text(
-            text=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users + done}.\nDone: {done}, Success: {success}, Failed: {failed}",
+            text=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users}.\nDone: {done}, Success: {success}, Failed: {failed}",
             quote=True
         )
     else:
         await update.reply_document(
             document='broadcast.txt',
-            caption=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users + done}.\nDone: {done}, Success: {success}, Failed: {failed}"
+            caption=f"Broadcast completed in `{completed_in}`\n\nTotal users {total_users}.\nDone: {done}, Success: {success}, Failed: {failed}"
         )
     os.remove('broadcast.txt')
     logger.info(f"Broadcast completed: Done={done}, Success={success}, Failed={failed}")
