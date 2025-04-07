@@ -7,18 +7,20 @@ from random import choice
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import *
+from pyrogram.storage import MemoryStorage  # SQLite के बजाय मेमोरी स्टोरेज
 from database import Database
 from config import *
 
 # Database initialization
 db = Database(DATABASE_URL, "autoreactionbot")
 
-# Bot setup
+# Bot setup with MemoryStorage
 Bot = Client(
     "Auto Reaction Bot",
     bot_token=BOT_TOKEN,
     api_id=API_ID,
     api_hash=API_HASH,
+    storage=MemoryStorage()  # SQLite सेशन को डिसेबल करने के लिए
 )
 
 # Messages and buttons
@@ -34,7 +36,7 @@ CLONE_START_TEXT = """<b>@{parent_bot}
 
 ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
-ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
+ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴮᴜᴅᴅʏɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
 
 <blockquote>ʜᴇʟʟᴏ {}, ᴛʜɪs ʙᴏᴛ ɪs ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
 
@@ -164,7 +166,7 @@ async def broadcast(bot, update):
     clone_clients = []
     for clone in all_clones:
         if clone['active']:
-            clone_client = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH)
+            clone_client = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH, storage=MemoryStorage())
             await clone_client.start()
             clone_clients.append(clone_client)
 
@@ -217,7 +219,7 @@ async def handle_clone_token(bot, message):
     token = message.text
     processing_msg = await message.reply("⏳ Processing your clone request...")
     try:
-        temp_client = Client("temp", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+        temp_client = Client("temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, storage=MemoryStorage())
         await temp_client.start()
         bot_info = await temp_client.get_me()
         await temp_client.stop()
@@ -235,7 +237,7 @@ async def handle_clone_token(bot, message):
             reply_markup=clone_buttons
         )
 
-        clone_bot = Client(f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+        clone_bot = Client(f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, storage=MemoryStorage())
         
         @clone_bot.on_message(filters.private & filters.command(["start"]))
         async def clone_start(client, update):
@@ -259,7 +261,7 @@ async def handle_clone_token(bot, message):
             except:
                 pass
         
-        await clone_bot.start()
+        asyncio.create_task(clone_bot.start())
 
     except Exception as e:
         await processing_msg.edit(f"❌ Failed to clone bot: {str(e)}")
@@ -319,41 +321,51 @@ async def send_reaction(_, msg: Message):
     except:
         pass
 
-# Activate clones on startup and run bot
+# Activate clones on startup
 async def activate_clones():
     all_clones = await db.get_all_clones()
     for clone in all_clones:
         if clone['active']:
-            clone_bot = Client(f"clone_{clone['username']}", bot_token=clone['token'], api_id=API_ID, api_hash=API_HASH)
-            
-            @clone_bot.on_message(filters.private & filters.command(["start"]))
-            async def clone_start(client, update):
-                clone_buttons = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
-                    [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
-                    [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
-                ])
-                await update.reply_text(
-                    text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
-                    link_preview_options=LinkPreviewOptions(is_disabled=True),
-                    reply_markup=clone_buttons
+            try:
+                clone_bot = Client(
+                    f"clone_{clone['username']}",
+                    bot_token=clone['token'],
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                    storage=MemoryStorage()
                 )
+                
+                @clone_bot.on_message(filters.private & filters.command(["start"]))
+                async def clone_start(client, update):
+                    clone_buttons = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                        [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                        [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                    ])
+                    await update.reply_text(
+                        text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        reply_markup=clone_buttons
+                    )
 
-            @clone_bot.on_message(filters.all)
-            async def clone_reaction(client, msg):
-                try:
-                    await msg.react(choice(EMOJIS))
-                    if msg.chat.type in ['group', 'supergroup', 'channel']:
-                        await db.update_connected_chats(clone['_id'], msg.chat.id)
-                except:
-                    pass
-            
-            await clone_bot.start()
+                @clone_bot.on_message(filters.all)
+                async def clone_reaction(client, msg):
+                    try:
+                        await msg.react(choice(EMOJIS))
+                        if msg.chat.type in ['group', 'supergroup', 'channel']:
+                            await db.update_connected_chats(clone['_id'], msg.chat.id)
+                    except:
+                        pass
+                
+                asyncio.create_task(clone_bot.start())
+                print(f"Started clone bot: @{clone['username']}")
+            except Exception as e:
+                print(f"Failed to start clone bot @{clone['username']}: {str(e)}")
 
 async def main():
     await Bot.start()
+    print("Main Bot Started!")
     await activate_clones()
-    print("Bot Started!")
     await asyncio.Future()  # Keep the bot running
 
 if __name__ == "__main__":
