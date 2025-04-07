@@ -41,7 +41,7 @@ VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
 # Define UPDATE_CHANNEL since it's not in config.py
 UPDATE_CHANNEL = "https://t.me/joinnowearn"
 
-# Ensure BOT_OWNER is correctly imported
+# Ensure BOT_OWNER matches config.py
 BOT_OWNER = int(os.environ.get("BOT_OWNER", "-1001814841940"))
 
 # Smart reaction manager
@@ -118,16 +118,16 @@ START_BUTTONS = InlineKeyboardMarkup(
         [InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')],
         [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url=UPDATE_CHANNEL)],
         [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴅʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
     ]
 )
 
 # Helper functions
 async def save_connected_user(user_id):
-    # Use db.connected_users as a collection
-    if not await db.connected_users.find_one({'user_id': user_id}):
-        await db.connected_users.insert_one({'user_id': user_id})
-        logger.info(f"Connected user {user_id} added to connected_users collection")
+    # Use db.users collection for all connected users
+    if not await db.users.find_one({'id': user_id}):
+        await db.users.insert_one({'id': user_id})
+        logger.info(f"Connected user {user_id} added to users collection")
 
 async def send_msg(user_id, message):
     try:
@@ -171,13 +171,7 @@ async def get_fsub(bot, message):
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
     user_id = update.from_user.id
-    # Save to users collection (for main bot stats)
-    if not await db.is_user_exist(user_id):
-        await db.add_user(user_id)
-        await bot.send_message(LOG_CHANNEL, LOG_TEXT.format(user_id, update.from_user.mention))
-        logger.info(f"New user added to users collection: {user_id}")
-    
-    # Save to connected_users collection (for broadcast and total)
+    # Save to users collection for all connected users
     await save_connected_user(user_id)
     
     is_subscribed = await get_fsub(bot, update)
@@ -193,7 +187,7 @@ async def start(bot, update):
 
 @Bot.on_message(filters.private & filters.command("users") & filters.user(BOT_OWNER))
 async def users(bot, update):
-    total_users = await db.total_users_count()
+    total_users = await db.users.count_documents({})
     text = f"Bot Status\n\nTotal Users: {total_users}"
     await update.reply_text(
         text=text,
@@ -204,15 +198,16 @@ async def users(bot, update):
 
 @Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
 async def stats(bot, update):
-    total_users = await db.total_users_count()
-    total_clones = await db.total_clones_count()
-    total_connected_users = await db.connected_users.count_documents({})
+    total_users = await db.users.count_documents({})
+    total_clones = await db.clones.count_documents({})
+    all_clones = await db.get_all_clones()
+    total_connected_users = total_users  # Since we're using db.users for all connected users
 
     text = (
         f"📊 Bot Statistics\n\n"
         f"👥 Total Users: {total_users}\n"
         f"🤖 Total Cloned Bots: {total_clones}\n"
-        f"💬 Total Connected Users (Clones): {total_connected_users}"
+        f"💬 Total Connected Users: {total_connected_users}"
     )
     await update.reply_text(
         text=text,
@@ -252,8 +247,8 @@ async def broadcast(bot, update):
     failed = 0
     success = 0
 
-    # Get all connected users from connected_users collection
-    all_connected_users = [user['user_id'] async for user in db.connected_users.find()]
+    # Get all connected users from users collection
+    all_connected_users = [user['id'] async for user in db.users.find()]
     total_users = len(all_connected_users)
     broadcast_ids = {"total": total_users, "current": done, "failed": failed, "success": success}
 
@@ -344,7 +339,7 @@ async def handle_clone_token(bot, message):
                 return
             
             user_id = update.from_user.id
-            await save_connected_user(user_id)  # Save to connected_users
+            await save_connected_user(user_id)  # Save to users collection
             if user_id not in clone_data.get('connected_users', []):
                 await db.clones.update_one(
                     {'_id': clone_data['_id']},
@@ -372,7 +367,7 @@ async def handle_clone_token(bot, message):
                 return
             
             user_id = update.from_user.id
-            await save_connected_user(user_id)  # Save to connected_users
+            await save_connected_user(user_id)  # Save to users collection
             if user_id not in clone_data.get('connected_users', []):
                 await db.clones.update_one(
                     {'_id': clone_data['_id']},
@@ -477,7 +472,7 @@ async def activate_clones():
                         return
                     
                     user_id = update.from_user.id
-                    await save_connected_user(user_id)  # Save to connected_users
+                    await save_connected_user(user_id)  # Save to users collection
                     if user_id not in clone_data.get('connected_users', []):
                         await db.clones.update_one(
                             {'_id': clone_data['_id']},
@@ -505,7 +500,7 @@ async def activate_clones():
                         return
                     
                     user_id = update.from_user.id
-                    await save_connected_user(user_id)  # Save to connected_users
+                    await save_connected_user(user_id)  # Save to users collection
                     if user_id not in clone_data.get('connected_users', []):
                         await db.clones.update_one(
                             {'_id': clone_data['_id']},
