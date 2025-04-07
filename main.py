@@ -104,12 +104,12 @@ Your clone will:
 
 START_BUTTONS = InlineKeyboardMarkup(
     [
-        [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot')],
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
-        [InlineKeyboardButton(text='• ʙᴏᴛ ᴄᴏᴜɴᴛ •', callback_data='bot_count')],
+        [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot'),
+         InlineKeyboardButton(text='• ᴍʏ ʙᴏᴛs •', callback_data='my_bots')],
         [InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')],
         [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url=UPDATE_CHANNEL)],
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
+        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
     ]
 )
 
@@ -405,12 +405,19 @@ async def clone_bot_callback(bot, query):
     await query.message.reply(CLONE_TEXT)
     logger.info(f"Clone bot callback triggered by {query.from_user.id}")
 
-@Bot.on_callback_query(filters.regex("bot_count"))
-async def bot_count_callback(bot, query):
+@Bot.on_callback_query(filters.regex("my_bots"))
+async def my_bots_callback(bot, query):
     user_id = query.from_user.id
-    total_clones = await db.clones.count_documents({'user_id': user_id})
-    await query.message.reply(f"Your Cloned Bots: {total_clones}")
-    logger.info(f"Bot count requested by {user_id}: {total_clones} clones")
+    all_clones = await db.clones.find({'user_id': user_id}).to_list(length=None)
+    
+    if not all_clones:
+        await query.message.reply("You have no active cloned bots!")
+        logger.info(f"No active bots found for user {user_id}")
+        return
+    
+    bot_list = "\n".join([f"@{clone['username']}" for clone in all_clones if clone['active']])
+    await query.message.reply(f"Your Active Cloned Bots:\n{bot_list}")
+    logger.info(f"My bots list requested by {user_id}: {len(all_clones)} active bots")
 
 @Bot.on_callback_query(filters.regex("disconnect_all"))
 async def disconnect_all_callback(bot, query):
