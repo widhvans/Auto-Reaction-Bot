@@ -38,9 +38,10 @@ class Database:
             'user_id': user_id,
             'token': token,
             'username': clone_username,
-            'parent_bot': "QuickReactRobot",  # Default parent bot username
+            'parent_bot': "QuickReactRobot",
             'active': True,
-            'created_at': datetime.datetime.now()
+            'created_at': datetime.datetime.now(),
+            'connected_chats': []  # List to store connected groups/channels
         }
         await self.clones.insert_one(clone_data)
         return clone_data
@@ -54,3 +55,23 @@ class Database:
 
     async def get_clone(self, token):
         return await self.clones.find_one({'token': token})
+
+    async def get_all_clones(self):
+        clones = self.clones.find({})
+        return await clones.to_list(length=None)
+
+    async def update_connected_chats(self, clone_id, chat_id):
+        await self.clones.update_one(
+            {'_id': clone_id},
+            {'$addToSet': {'connected_chats': chat_id}}
+        )
+
+    async def remove_connected_chat(self, clone_id, chat_id):
+        await self.clones.update_one(
+            {'_id': clone_id},
+            {'$pull': {'connected_chats': chat_id}}
+        )
+
+    async def total_clones_count(self):
+        count = await self.clones.count_documents({})
+        return count
