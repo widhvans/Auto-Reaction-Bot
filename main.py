@@ -349,17 +349,18 @@ async def my_bots_callback(bot, query):
     processing_msg = await query.message.reply("⏳ Loading your bots...")
     await asyncio.sleep(0.5)  # Smooth opening animation
     
+    # Fetch fresh data from database every time
     clones = await db.get_user_clones(query.from_user.id)
+    logger.info(f"Fetched clones for user {query.from_user.id}: {len(clones)} found")
+
     if not clones:
-        if query.message.text != "You haven't cloned any bots yet!":
-            await processing_msg.edit("You haven't cloned any bots yet!")
-        else:
-            await processing_msg.delete()
+        await processing_msg.edit("You haven't cloned any bots yet!")
         logger.info(f"No clones found for user {query.from_user.id}")
         return
 
     buttons = []
     seen_usernames = set()
+    active_bots = []
     for clone in clones:
         if clone['username'] not in seen_usernames:
             try:
@@ -374,21 +375,20 @@ async def my_bots_callback(bot, query):
                     InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
                 ])
                 seen_usernames.add(clone['username'])
-            except Exception:
-                await db.clones.delete_one({'_id': clone['_id']})
-                logger.info(f"Removed deleted bot @{clone['username']} from DB")
-                continue
+                active_bots.append(clone)
+            except Exception as e:
+                logger.warning(f"Bot @{clone['username']} is invalid or deleted: {str(e)}")
+                continue  # Skip invalid bots without deleting them here
 
-    new_text = MY_BOTS_TEXT if buttons else "No active bots found!"
-    current_text = query.message.text or ""
-    if current_text != new_text or not buttons:
-        await processing_msg.edit(
-            new_text,
-            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None
-        )
+    if not buttons:
+        await processing_msg.edit("No active bots found!")
+        logger.info(f"No active bots found for user {query.from_user.id}")
     else:
-        await processing_msg.delete()
-    logger.info(f"My bots list updated for user {query.from_user.id}: {len(buttons)} active bots")
+        await processing_msg.edit(
+            MY_BOTS_TEXT,
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        logger.info(f"My bots list updated for user {query.from_user.id}: {len(active_bots)} active bots")
 
 @Bot.on_callback_query(filters.regex(r"toggle_(.+)"))
 async def toggle_clone_callback(bot, query):
@@ -412,10 +412,19 @@ async def delete_clone_callback(bot, query):
     if clone:
         processing_msg = await query.message.reply(f"⏳ Deleting @{clone['username']}...")
         await asyncio.sleep(0.5)  # Smooth animation delay
-        await db.clones.delete_one({'_id': clone_id})  # Delete only the specific clone
+        
+        # Delete only the specific clone
+        result = await db.clones.delete_one({'_id': clone_id})
+        if result.deleted_count == 1:
+            logger.info(f"Bot @{clone['username']} successfully removed from database by {query.from_user.id}")
+        else:
+            logger.warning(f"Failed to remove bot @{clone['username']} from database")
+
         await asyncio.sleep(0.5)  # Additional delay for smoothness
         await processing_msg.edit(f"✅ Bot @{clone['username']} deleted successfully!")
         await asyncio.sleep(0.5)  # Final delay before refreshing
+        
+        # Refresh the list immediately
         await my_bots_callback(bot, query)
         logger.info(f"Bot @{clone['username']} deleted by {query.from_user.id}")
     else:
