@@ -7,20 +7,19 @@ from random import choice
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import *
-from pyrogram.storage import MemoryStorage  # SQLite के बजाय मेमोरी स्टोरेज
 from database import Database
 from config import *
 
 # Database initialization
 db = Database(DATABASE_URL, "autoreactionbot")
 
-# Bot setup with MemoryStorage
+# Bot setup with in-memory storage
 Bot = Client(
-    name="AutoReactionBot",  # MemoryStorage के लिए नाम देना ज़रूरी है
+    name="AutoReactionBot",
     bot_token=BOT_TOKEN,
     api_id=API_ID,
     api_hash=API_HASH,
-    in_memory=True  # SQLite सेशन को डिसेबल करने के लिए इन-मेमोरी स्टोरेज
+    in_memory=True
 )
 
 # Messages and buttons
@@ -28,17 +27,13 @@ START_TEXT = """<b>{},
 
 ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
-ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ
-
-<blockquote>ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
+ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
 CLONE_START_TEXT = """<b>@{parent_bot}
 
 ɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
-ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!
-
-<blockquote>ʜᴇʟʟᴏ {}, ᴛʜɪs ʙᴏᴛ ɪs ᴍᴀɪɴᴛᴀɪɴᴇᴅ ʙʏ : <a href='https://telegram.me/CallOwnerBot'>ʀᴀʜᴜʟ</a></blockquote></b>"""
+ᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"""
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Send your bot token to create a clone of me!
@@ -247,7 +242,7 @@ async def handle_clone_token(bot, message):
                 [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
             ])
             await update.reply_text(
-                text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
+                text=CLONE_START_TEXT.format(BOT_USERNAME),
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
                 reply_markup=clone_buttons
             )
@@ -272,18 +267,22 @@ async def clone_bot_callback(bot, query):
 
 @Bot.on_callback_query(filters.regex("my_bots"))
 async def my_bots_callback(bot, query):
+    # Fetch fresh data from the database every time
     clones = await db.get_user_clones(query.from_user.id)
     if not clones:
         await query.message.edit_text("You haven't cloned any bots yet!")
         return
 
     buttons = []
+    seen_usernames = set()  # To avoid duplicates
     for clone in clones:
-        status = "✅" if clone['active'] else "❌"
-        buttons.append([
-            InlineKeyboardButton(f"{status} @{clone['username']}", callback_data=f"toggle_{clone['_id']}"),
-            InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
-        ])
+        if clone['username'] not in seen_usernames:
+            status = "✅" if clone['active'] else "❌"
+            buttons.append([
+                InlineKeyboardButton(f"{status} @{clone['username']}", callback_data=f"toggle_{clone['_id']}"),
+                InlineKeyboardButton("Delete", callback_data=f"delete_{clone['_id']}")
+            ])
+            seen_usernames.add(clone['username'])
 
     await query.message.edit_text(
         MY_BOTS_TEXT,
@@ -309,7 +308,7 @@ async def delete_clone_callback(bot, query):
     if clone:
         await db.clones.delete_one({'_id': clone_id})
         await query.answer(f"Bot @{clone['username']} deleted successfully!")
-        await my_bots_callback(bot, query)
+        await my_bots_callback(bot, query)  # Refresh the list immediately
     else:
         await query.answer("Bot not found or already deleted!")
 
@@ -343,7 +342,7 @@ async def activate_clones():
                         [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
                     ])
                     await update.reply_text(
-                        text=CLONE_START_TEXT.format(BOT_USERNAME, update.from_user.mention),
+                        text=CLONE_START_TEXT.format(BOT_USERNAME),
                         link_preview_options=LinkPreviewOptions(is_disabled=True),
                         reply_markup=clone_buttons
                     )
