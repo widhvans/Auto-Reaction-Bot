@@ -100,12 +100,10 @@ Create a bot with @BotFather and send me the token here to clone me!"""
 
 START_BUTTONS = InlineKeyboardMarkup(
     [
-        [InlineKeyboardButton(text='• ᴄʟᴏɴᴇ ʙᴏᴛ •', callback_data='clone_bot'),
-         InlineKeyboardButton(text='• ᴍʏ ʙᴏᴛs •', callback_data='my_bots')],
-        [InlineKeyboardButton(text='• ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ •', callback_data='disconnect_all')],
-        [InlineKeyboardButton(text='• ᴜᴩᴅᴀᴛᴇꜱ •', url=UPDATE_CHANNEL)],
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startgroup=botstart')],
-        [InlineKeyboardButton(text='⇆ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ⇆', url=f'https://telegram.me/{BOT_USERNAME}?startchannel=botstart')],
+        [InlineKeyboardButton(text='🤖 ᴄʟᴏɴᴇ ʏᴏᴜʀ ʙᴏᴛ', callback_data='clone_bot'),
+         InlineKeyboardButton(text='📋 ᴍʏ ʙᴏᴛs', callback_data='my_bots')],
+        [InlineKeyboardButton(text='🔌 ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ ᴄʟᴏɴᴇᴅ', callback_data='disconnect_all')],
+        [InlineKeyboardButton(text='🔔 ᴜᴩᴅᴀᴛᴇꜱ', url=UPDATE_CHANNEL)],
     ]
 )
 
@@ -243,9 +241,9 @@ async def handle_clone_token(bot, message):
         logger.info(f"Bot added to database: @{bot_info.username}")
         
         clone_buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
-            [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-            [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+            [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+            [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
+            [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
         ])
 
         await processing_msg.edit(
@@ -273,9 +271,9 @@ async def handle_clone_token(bot, message):
                 logger.info(f"User {user_id} added to connected_users for @{bot_info.username}")
 
             clone_buttons = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
-                [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
-                [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+                [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
+                [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
             ])
             await update.reply_text(
                 text=CLONE_START_TEXT.format(bot_info.username),
@@ -406,9 +404,9 @@ async def activate_clones():
                         logger.info(f"User {user_id} added to connected_users for @{clone['username']}")
 
                     clone_buttons = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Add to Group", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
-                        [InlineKeyboardButton("Add to Channel", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
-                        [InlineKeyboardButton("Create Your Own Bot", url=f"https://telegram.me/{BOT_USERNAME}")]
+                        [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                        [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                        [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
                     ])
                     await update.reply_text(
                         text=CLONE_START_TEXT.format(clone['username']),
