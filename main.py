@@ -93,7 +93,7 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
-CLONE_START_TEXT = f"<b>@{BOT_USERNAME}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
+CLONE_START_TEXT = f"<b>🤖 Parent Bot - @{BOT_USERNAME} 🤖\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Create a bot with @BotFather and send me the token here to clone me!"""
@@ -318,9 +318,9 @@ async def handle_clone_token(bot, message):
                     logger.info(f"Chat {msg.chat.id} added to connected_chats for @{bot_info.username}")
             except (UserNotParticipant, ChatAdminRequired):
                 await db.clones.delete_one({'_id': clone_data['_id']})
-                logger.info(f"Bot @{bot_info.username} disconnected and removed from database due to lack of access in {msg.chat.id}")
+                logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
             except Exception as e:
-                logger.error(f"Error in reaction for @{bot_info.username}: {str(e)}")
+                logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
         
         asyncio.create_task(clone_bot.start())
         logger.info(f"Clone bot started: @{bot_info.username}")
