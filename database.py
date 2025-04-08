@@ -41,7 +41,8 @@ class Database:
             'parent_bot': "QuickReactRobot",
             'active': True,
             'created_at': datetime.datetime.now(),
-            'connected_chats': []  # List to store connected groups/channels
+            'connected_chats': [],
+            'connected_users': []
         }
         await self.clones.insert_one(clone_data)
         return clone_data
@@ -75,3 +76,19 @@ class Database:
     async def total_clones_count(self):
         count = await self.clones.count_documents({})
         return count
+
+    async def update_connected_users(self, clone_id, user_id):
+        await self.clones.update_one(
+            {'_id': clone_id},
+            {'$addToSet': {'connected_users': user_id}}
+        )
+
+    # Broadcast related methods
+    async def get_all_connected_users(self):
+        all_users = await self.users.find({}).to_list(length=None)
+        all_clones = await self.clones.find({}).to_list(length=None)
+        
+        user_ids = set(user['id'] for user in all_users)
+        for clone in all_clones:
+            user_ids.update(clone.get('connected_users', []))
+        return list(user_ids)
