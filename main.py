@@ -14,8 +14,8 @@ import traceback
 
 # Set up logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed to DEBUG for more detailed output
-    format='%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("bot.log"),
         logging.StreamHandler()
