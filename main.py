@@ -170,6 +170,11 @@ async def start(bot, update):
 
 @Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
 async def stats(bot, update):
+    logger.info(f"Stats command received from user {update.from_user.id}, BOT_OWNER is {BOT_OWNER}")
+    if update.from_user.id != BOT_OWNER:
+        logger.warning(f"Unauthorized stats attempt by {update.from_user.id}")
+        return
+    
     total_users = await db.total_users_count()
     total_clones = await db.total_clones_count()
     all_clones = await db.get_all_clones()
@@ -189,10 +194,15 @@ async def stats(bot, update):
         quote=True,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
-    logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}")
+    logger.info(f"Stats command executed: Users={total_users}, Clones={total_clones}")
 
 @Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER))
 async def broadcast(bot, update):
+    logger.info(f"Broadcast command received from user {update.from_user.id}, BOT_OWNER is {BOT_OWNER}")
+    if update.from_user.id != BOT_OWNER:
+        logger.warning(f"Unauthorized broadcast attempt by {update.from_user.id}")
+        return
+
     if not update.reply_to_message:
         await update.reply_text("Please reply to a message to broadcast!")
         return
@@ -205,17 +215,21 @@ async def broadcast(bot, update):
         await update.reply_text("No users to broadcast to!")
         return
 
-    await update.reply_text(f"Starting broadcast to {total_users} users...")
+    processing_msg = await update.reply_text(f"Starting broadcast to {total_users} users...")
     success_count = 0
     failed_count = 0
     
     for user_id in all_users:
-        status, error = await send_msg(user_id, broadcast_msg)
-        if status == 200:
-            success_count += 1
-        else:
+        try:
+            status, error = await send_msg(user_id, broadcast_msg)
+            if status == 200:
+                success_count += 1
+            else:
+                failed_count += 1
+            await asyncio.sleep(0.5)  # Rate limiting
+        except Exception as e:
+            logger.error(f"Broadcast failed for user {user_id}: {str(e)}")
             failed_count += 1
-        await asyncio.sleep(0.5)  # To avoid hitting rate limits
 
     result_text = (
         f"📢 Broadcast Completed!\n\n"
@@ -223,9 +237,8 @@ async def broadcast(bot, update):
         f"❌ Failed to send to: {failed_count} users\n"
         f"👥 Total users: {total_users}"
     )
-    await update.reply_text(result_text)
+    await processing_msg.edit(result_text)
     logger.info(f"Broadcast completed: Success={success_count}, Failed={failed_count}")
-
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
