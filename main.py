@@ -1,4 +1,3 @@
-
 import os
 import time
 import asyncio
@@ -45,8 +44,8 @@ UPDATE_CHANNEL = "https://t.me/joinnowearn"
 # Smart reaction manager
 class ReactionManager:
     def __init__(self):
-        self.rate_limits = {}  # Tracks rate limits per chat
-        self.max_reactions_per_second = 20  # Telegram's approximate limit
+        self.rate_limits = {}
+        self.max_reactions_per_second = 20
         self.queue = asyncio.Queue()
 
     async def add_reaction(self, client, msg):
@@ -60,7 +59,7 @@ class ReactionManager:
             self.rate_limits[chat_id] = {'count': 0, 'last_reset': current_time}
 
         if self.rate_limits[chat_id]['count'] >= self.max_reactions_per_second:
-            await asyncio.sleep(1)  # Wait intelligently
+            await asyncio.sleep(1)
             self.rate_limits[chat_id] = {'count': 0, 'last_reset': time.time()}
 
         await self.queue.put((client, msg))
@@ -76,7 +75,7 @@ class ReactionManager:
             except FloodWait as e:
                 logger.warning(f"Flood wait of {e.value} seconds for reaction in chat {msg.chat.id}")
                 await asyncio.sleep(min(e.value, 5))
-                await self.add_reaction(client, msg)  # Retry
+                await self.add_reaction(client, msg)
             except ReactionInvalid:
                 logger.warning(f"Invalid reaction attempted in chat {msg.chat.id}, retrying")
                 await self.add_reaction(client, msg)
@@ -110,9 +109,8 @@ START_BUTTONS = InlineKeyboardMarkup(
 
 # Helper functions
 async def save_connected_user(user_id):
-    # Use db.users collection for all connected users
-    if not await db.users.find_one({'id': user_id}):
-        await db.users.insert_one({'id': user_id})
+    if not await db.is_user_exist(user_id):
+        await db.add_user(user_id)
         logger.info(f"Connected user {user_id} added to users collection")
 
 async def send_msg(user_id, message):
@@ -157,7 +155,6 @@ async def get_fsub(bot, message):
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
     user_id = update.from_user.id
-    # Save to users collection for all connected users
     await save_connected_user(user_id)
     
     is_subscribed = await get_fsub(bot, update)
@@ -171,38 +168,63 @@ async def start(bot, update):
     )
     logger.info(f"Start command processed for user {user_id}")
 
-@Bot.on_message(filters.private & filters.command("users") & filters.user(BOT_OWNER))
-async def users(bot, update):
-    total_users = await db.users.count_documents({})
-    text = f"Bot Status\n\nTotal Users: {total_users}"
-    await update.reply_text(
-        text=text,
-        quote=True,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
-    logger.info(f"Users command executed by owner: Total users = {total_users}")
-
-@Bot.on_message(filters.private & filters.command("total"))
-async def total(bot, update):
-    user_id = update.from_user.id
-    total_clones = await db.clones.count_documents({'user_id': user_id})
-    all_clones = await db.clones.find({'user_id': user_id}).to_list(length=None)
+@Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
+async def stats(bot, update):
+    total_users = await db.total_users_count()
+    total_clones = await db.total_clones_count()
+    all_clones = await db.get_all_clones()
     connected_users = set()
-
+    
     for clone in all_clones:
         connected_users.update(clone.get('connected_users', []))
-
+    
     text = (
-        f"📊 Your Totals\n\n"
+        f"📊 Bot Statistics\n\n"
+        f"👥 Total Users: {total_users}\n"
         f"🤖 Total Cloned Bots: {total_clones}\n"
-        f"💬 Total Connected Users: {len(connected_users)}"
+        f"🔗 Total Connected Users: {len(connected_users)}"
     )
     await update.reply_text(
         text=text,
         quote=True,
         link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
-    logger.info(f"Total command executed by {user_id}: Clones={total_clones}, Connected Users={len(connected_users)}")
+    logger.info(f"Stats command executed by owner: Users={total_users}, Clones={total_clones}")
+
+@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER))
+async def broadcast(bot, update):
+    if not update.reply_to_message:
+        await update.reply_text("Please reply to a message to broadcast!")
+        return
+
+    broadcast_msg = update.reply_to_message
+    all_users = await db.get_all_connected_users()
+    total_users = len(all_users)
+    
+    if total_users == 0:
+        await update.reply_text("No users to broadcast to!")
+        return
+
+    await update.reply_text(f"Starting broadcast to {total_users} users...")
+    success_count = 0
+    failed_count = 0
+    
+    for user_id in all_users:
+        status, error = await send_msg(user_id, broadcast_msg)
+        if status == 200:
+            success_count += 1
+        else:
+            failed_count += 1
+        await asyncio.sleep(0.5)  # To avoid hitting rate limits
+
+    result_text = (
+        f"📢 Broadcast Completed!\n\n"
+        f"✅ Successfully sent to: {success_count} users\n"
+        f"❌ Failed to send to: {failed_count} users\n"
+        f"👥 Total users: {total_users}"
+    )
+    await update.reply_text(result_text)
+    logger.info(f"Broadcast completed: Success={success_count}, Failed={failed_count}")
 
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
@@ -230,16 +252,7 @@ async def handle_clone_token(bot, message):
         await temp_client.stop()
         logger.info(f"Bot info retrieved: @{bot_info.username}")
 
-        clone_data = {
-            'user_id': message.from_user.id,
-            'token': token,
-            'username': bot_info.username,
-            'active': True,
-            'connected_chats': [],
-            'connected_users': []
-        }
-        await db.clones.insert_one(clone_data)
-        logger.info(f"Bot added to database: @{bot_info.username}")
+        clone_data = await db.add_clone(message.from_user.id, token, bot_info.username)
         
         clone_buttons = InlineKeyboardMarkup([
             [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
@@ -263,13 +276,8 @@ async def handle_clone_token(bot, message):
                 return
             
             user_id = update.from_user.id
-            await save_connected_user(user_id)  # Save to users collection
-            if user_id not in clone_data.get('connected_users', []):
-                await db.clones.update_one(
-                    {'_id': clone_data['_id']},
-                    {'$push': {'connected_users': user_id}}
-                )
-                logger.info(f"User {user_id} added to connected_users for @{bot_info.username}")
+            await save_connected_user(user_id)
+            await db.update_connected_users(clone_data['_id'], user_id)
 
             clone_buttons = InlineKeyboardMarkup([
                 [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
@@ -291,14 +299,8 @@ async def handle_clone_token(bot, message):
                 return
             
             user_id = update.from_user.id
-            await save_connected_user(user_id)  # Save to users collection
-            if user_id not in clone_data.get('connected_users', []):
-                await db.clones.update_one(
-                    {'_id': clone_data['_id']},
-                    {'$push': {'connected_users': user_id}}
-                )
-                logger.info(f"User {user_id} added to connected_users for @{bot_info.username}")
-
+            await save_connected_user(user_id)
+            await db.update_connected_users(clone_data['_id'], user_id)
             await reaction_manager.add_reaction(client, update)
 
         @clone_bot.on_message(filters.group | filters.channel)
@@ -311,17 +313,12 @@ async def handle_clone_token(bot, message):
             try:
                 await client.get_chat_member(msg.chat.id, "me")
                 await reaction_manager.add_reaction(client, msg)
-                if msg.chat.id not in clone_data.get('connected_chats', []):
-                    await db.clones.update_one(
-                        {'_id': clone_data['_id']},
-                        {'$push': {'connected_chats': msg.chat.id}}
-                    )
-                    logger.info(f"Chat {msg.chat.id} added to connected_chats for @{bot_info.username}")
+                await db.update_connected_chats(clone_data['_id'], msg.chat.id)
             except (UserNotParticipant, ChatAdminRequired):
                 await db.clones.delete_one({'_id': clone_data['_id']})
-                logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
+                logger.info(f"Bot @{bot_info.username} disconnected and removed from database due to lack of access in {msg.chat.id}")
             except Exception as e:
-                logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
+                logger.error(f"Error in reaction for @{bot_info.username}: {str(e)}")
         
         asyncio.create_task(clone_bot.start())
         logger.info(f"Clone bot started: @{bot_info.username}")
@@ -341,7 +338,7 @@ async def clone_bot_callback(bot, query):
 @Bot.on_callback_query(filters.regex("my_bots"))
 async def my_bots_callback(bot, query):
     user_id = query.from_user.id
-    all_clones = await db.clones.find({'user_id': user_id}).to_list(length=None)
+    all_clones = await db.get_user_clones(user_id)
     
     if not all_clones:
         await query.message.reply("You have no active cloned bots!")
@@ -355,14 +352,12 @@ async def my_bots_callback(bot, query):
 @Bot.on_callback_query(filters.regex("disconnect_all"))
 async def disconnect_all_callback(bot, query):
     user_id = query.from_user.id
-    all_clones = await db.clones.find({'user_id': user_id}).to_list(length=None)
+    all_clones = await db.get_user_clones(user_id)
     disconnected_count = 0
     
-    # Delete all clones for this user
     result = await db.clones.delete_many({'user_id': user_id})
     disconnected_count = result.deleted_count
     
-    # Log each bot that was disconnected
     for clone in all_clones:
         logger.info(f"Bot @{clone['username']} disconnected and removed from database by {user_id}")
 
@@ -396,13 +391,8 @@ async def activate_clones():
                         return
                     
                     user_id = update.from_user.id
-                    await save_connected_user(user_id)  # Save to users collection
-                    if user_id not in clone_data.get('connected_users', []):
-                        await db.clones.update_one(
-                            {'_id': clone_data['_id']},
-                            {'$push': {'connected_users': user_id}}
-                        )
-                        logger.info(f"User {user_id} added to connected_users for @{clone['username']}")
+                    await save_connected_user(user_id)
+                    await db.update_connected_users(clone_data['_id'], user_id)
 
                     clone_buttons = InlineKeyboardMarkup([
                         [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
@@ -424,14 +414,8 @@ async def activate_clones():
                         return
                     
                     user_id = update.from_user.id
-                    await save_connected_user(user_id)  # Save to users collection
-                    if user_id not in clone_data.get('connected_users', []):
-                        await db.clones.update_one(
-                            {'_id': clone_data['_id']},
-                            {'$push': {'connected_users': user_id}}
-                        )
-                        logger.info(f"User {user_id} added to connected_users for @{clone['username']}")
-
+                    await save_connected_user(user_id)
+                    await db.update_connected_users(clone_data['_id'], user_id)
                     await reaction_manager.add_reaction(client, update)
 
                 @clone_bot.on_message(filters.group | filters.channel)
@@ -444,12 +428,7 @@ async def activate_clones():
                     try:
                         await client.get_chat_member(msg.chat.id, "me")
                         await reaction_manager.add_reaction(client, msg)
-                        if msg.chat.id not in clone_data.get('connected_chats', []):
-                            await db.clones.update_one(
-                                {'_id': clone_data['_id']},
-                                {'$push': {'connected_chats': msg.chat.id}}
-                            )
-                            logger.info(f"Chat {msg.chat.id} added to connected_chats for @{clone['username']}")
+                        await db.update_connected_chats(clone_data['_id'], msg.chat.id)
                     except (UserNotParticipant, ChatAdminRequired):
                         await db.clones.delete_one({'_id': clone_data['_id']})
                         logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
@@ -467,7 +446,7 @@ async def main():
     logger.info("Main Bot Started!")
     asyncio.create_task(reaction_manager.process_reactions())
     await activate_clones()
-    await asyncio.Future()  # Keep the bot running
+    await asyncio.Future()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
