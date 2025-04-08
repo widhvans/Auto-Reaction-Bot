@@ -10,11 +10,12 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, 
 from pyrogram.errors import *
 from database import Database
 from config import *
+import traceback
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG,  # Changed to DEBUG for more detailed output
+    format='%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s',
     handlers=[
         logging.FileHandler("bot.log"),
         logging.StreamHandler()
@@ -168,77 +169,112 @@ async def start(bot, update):
     )
     logger.info(f"Start command processed for user {user_id}")
 
-@Bot.on_message(filters.private & filters.command("stats") & filters.user(BOT_OWNER))
+@Bot.on_message(filters.private & filters.command("stats"))
 async def stats(bot, update):
-    logger.info(f"Stats command received from user {update.from_user.id}, BOT_OWNER is {BOT_OWNER}")
-    if update.from_user.id != BOT_OWNER:
-        logger.warning(f"Unauthorized stats attempt by {update.from_user.id}")
+    user_id = str(update.from_user.id)  # Convert to string for comparison
+    bot_owner_str = str(BOT_OWNER)      # Ensure BOT_OWNER is string
+    
+    logger.debug(f"Stats command received - User ID: {user_id}, Type: {type(user_id)}")
+    logger.debug(f"BOT_OWNER: {bot_owner_str}, Type: {type(bot_owner_str)}")
+    
+    # Compare as strings first
+    if user_id != bot_owner_str:
+        logger.warning(f"Unauthorized stats attempt - User: {user_id}, Expected: {bot_owner_str}")
+        await update.reply_text("❌ You are not authorized to use this command!")
         return
     
-    total_users = await db.total_users_count()
-    total_clones = await db.total_clones_count()
-    all_clones = await db.get_all_clones()
-    connected_users = set()
-    
-    for clone in all_clones:
-        connected_users.update(clone.get('connected_users', []))
-    
-    text = (
-        f"📊 Bot Statistics\n\n"
-        f"👥 Total Users: {total_users}\n"
-        f"🤖 Total Cloned Bots: {total_clones}\n"
-        f"🔗 Total Connected Users: {len(connected_users)}"
-    )
-    await update.reply_text(
-        text=text,
-        quote=True,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
-    logger.info(f"Stats command executed: Users={total_users}, Clones={total_clones}")
+    try:
+        logger.info(f"Processing stats command for authorized user: {user_id}")
+        total_users = await db.total_users_count()
+        total_clones = await db.total_clones_count()
+        all_clones = await db.get_all_clones()
+        connected_users = set()
+        
+        for clone in all_clones:
+            connected_users.update(clone.get('connected_users', []))
+        
+        text = (
+            f"📊 Bot Statistics\n\n"
+            f"👥 Total Users: {total_users}\n"
+            f"🤖 Total Cloned Bots: {total_clones}\n"
+            f"🔗 Total Connected Users: {len(connected_users)}"
+        )
+        await update.reply_text(
+            text=text,
+            quote=True,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        logger.info(f"Stats command completed successfully: Users={total_users}, Clones={total_clones}")
+        
+    except Exception as e:
+        error_msg = f"Error in stats command: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        await update.reply_text("❌ An error occurred while fetching stats!")
 
-@Bot.on_message(filters.private & filters.command("broadcast") & filters.user(BOT_OWNER))
+@Bot.on_message(filters.private & filters.command("broadcast"))
 async def broadcast(bot, update):
-    logger.info(f"Broadcast command received from user {update.from_user.id}, BOT_OWNER is {BOT_OWNER}")
-    if update.from_user.id != BOT_OWNER:
-        logger.warning(f"Unauthorized broadcast attempt by {update.from_user.id}")
-        return
-
-    if not update.reply_to_message:
-        await update.reply_text("Please reply to a message to broadcast!")
-        return
-
-    broadcast_msg = update.reply_to_message
-    all_users = await db.get_all_connected_users()
-    total_users = len(all_users)
+    user_id = str(update.from_user.id)  # Convert to string for comparison
+    bot_owner_str = str(BOT_OWNER)      # Ensure BOT_OWNER is string
     
-    if total_users == 0:
-        await update.reply_text("No users to broadcast to!")
+    logger.debug(f"Broadcast command received - User ID: {user_id}, Type: {type(user_id)}")
+    logger.debug(f"BOT_OWNER: {bot_owner_str}, Type: {type(bot_owner_str)}")
+    
+    if user_id != bot_owner_str:
+        logger.warning(f"Unauthorized broadcast attempt - User: {user_id}, Expected: {bot_owner_str}")
+        await update.reply_text("❌ You are not authorized to use this command!")
         return
 
-    processing_msg = await update.reply_text(f"Starting broadcast to {total_users} users...")
-    success_count = 0
-    failed_count = 0
-    
-    for user_id in all_users:
-        try:
-            status, error = await send_msg(user_id, broadcast_msg)
-            if status == 200:
-                success_count += 1
-            else:
+    try:
+        logger.info(f"Processing broadcast command for authorized user: {user_id}")
+        
+        if not update.reply_to_message:
+            logger.info("No message to broadcast - user didn't reply to a message")
+            await update.reply_text("Please reply to a message to broadcast!")
+            return
+
+        broadcast_msg = update.reply_to_message
+        all_users = await db.get_all_connected_users()
+        total_users = len(all_users)
+        
+        logger.debug(f"Total users to broadcast to: {total_users}")
+        
+        if total_users == 0:
+            logger.info("No users available for broadcast")
+            await update.reply_text("No users to broadcast to!")
+            return
+
+        processing_msg = await update.reply_text(f"Starting broadcast to {total_users} users...")
+        success_count = 0
+        failed_count = 0
+        
+        for user_id in all_users:
+            try:
+                logger.debug(f"Attempting to broadcast to user: {user_id}")
+                status, error = await send_msg(user_id, broadcast_msg)
+                if status == 200:
+                    success_count += 1
+                    logger.debug(f"Successfully broadcast to user: {user_id}")
+                else:
+                    failed_count += 1
+                    logger.debug(f"Failed to broadcast to user: {user_id} - Error: {error}")
+                await asyncio.sleep(0.5)
+            except Exception as e:
                 failed_count += 1
-            await asyncio.sleep(0.5)  # Rate limiting
-        except Exception as e:
-            logger.error(f"Broadcast failed for user {user_id}: {str(e)}")
-            failed_count += 1
+                logger.error(f"Broadcast failed for user {user_id}: {str(e)}")
 
-    result_text = (
-        f"📢 Broadcast Completed!\n\n"
-        f"✅ Successfully sent to: {success_count} users\n"
-        f"❌ Failed to send to: {failed_count} users\n"
-        f"👥 Total users: {total_users}"
-    )
-    await processing_msg.edit(result_text)
-    logger.info(f"Broadcast completed: Success={success_count}, Failed={failed_count}")
+        result_text = (
+            f"📢 Broadcast Completed!\n\n"
+            f"✅ Successfully sent to: {success_count} users\n"
+            f"❌ Failed to send to: {failed_count} users\n"
+            f"👥 Total users: {total_users}"
+        )
+        await processing_msg.edit(result_text)
+        logger.info(f"Broadcast completed: Success={success_count}, Failed={failed_count}")
+        
+    except Exception as e:
+        error_msg = f"Error in broadcast command: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        await update.reply_text("❌ An error occurred during broadcast!")
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
