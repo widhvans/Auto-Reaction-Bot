@@ -93,7 +93,7 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
-CLONE_START_TEXT = "<b>@{0}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
+CLONE_START_TEXT = f"<b>@{BOT_USERNAME}\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Create a bot with @BotFather and send me the token here to clone me!"""
@@ -276,7 +276,7 @@ async def handle_clone_token(bot, message):
                 [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
             ])
             await update.reply_text(
-                text=CLONE_START_TEXT.format(bot_info.username),
+                text=CLONE_START_TEXT,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
                 reply_markup=clone_buttons
             )
@@ -409,7 +409,7 @@ async def activate_clones():
                         [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
                     ])
                     await update.reply_text(
-                        text=CLONE_START_TEXT.format(clone['username']),
+                        text=CLONE_START_TEXT,
                         link_preview_options=LinkPreviewOptions(is_disabled=True),
                         reply_markup=clone_buttons
                     )
