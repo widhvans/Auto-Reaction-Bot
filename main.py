@@ -6,6 +6,7 @@ import aiofiles
 import logging
 from random import choice
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import *
 from database import Database
