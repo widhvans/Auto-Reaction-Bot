@@ -1,3 +1,4 @@
+
 from os import environ
 
 API_HASH = environ.get("API_HASH", "8a19a6a007044ff7b41ada4b377cdfba")
