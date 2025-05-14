@@ -432,9 +432,7 @@ async def broadcast(bot, update):
 async def reaction_army_callback(bot, query):
     army_text = (
         "<b>💂 My Reaction Army</b>\n\n"
-        "1. First, add the main bot (@{main_bot}) to your group or channel and make it an admin with full permissions, including 'Add Admins' and 'Invite Users'.\n"
-        "2. Add the army bots below to the same group or channel using the buttons.\n"
-        "3. Use the /addarmy command in the group/channel to detect and promote the army bots to admins with the same permissions as the main bot.\n\n"
+        "1. Add all my army to get more reactions\n 1 bot = 1 reaction\n"
         "<b>Army Bots:</b>\n"
     ).format(main_bot=BOT_USERNAME)
 
