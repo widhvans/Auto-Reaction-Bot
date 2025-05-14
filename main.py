@@ -196,16 +196,17 @@ async def validate_army_bots():
 
 async def promote_army_bots(client, chat_id, reply_func=None):
     try:
-        # Define admin privileges
+        # Define admin privileges (corrected Pyrogram parameters)
         admin_privileges = {
-            "can_manage_chat": True,
-            "can_delete_messages": True,
-            "can_manage_video_chats": True,
-            "can_restrict_members": True,
-            "can_promote_members": True,
             "can_change_info": True,
+            "can_post_messages": True,
+            "can_edit_messages": True,
+            "can_delete_messages": True,
             "can_invite_users": True,
+            "can_restrict_members": True,
             "can_pin_messages": True,
+            "can_promote_members": True,
+            "can_manage_voice_chats": True,
             "can_manage_topics": True
         }
 
@@ -246,7 +247,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                                 logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
                                 failed_count += 1
                                 if reply_func:
-                                    await reply_func(f"Failed to promote @{username}. Please send a message to @{username} to register it with Telegram, then retry.")
+                                    await reply_func(f"Failed to promote @{username}. Please send a private /start to @{username} to register it with Telegram, then retry.")
                         except ChatAdminRequired:
                             logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
                             failed_count += 1
@@ -258,6 +259,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                             failed_count += 1
                             break
                     await asyncio.sleep(1)  # Rate limit delay
+                await asyncio.sleep(0.5)  # Rate limit delay between members
         except Exception as e:
             logger.error(f"Error scanning members in chat {chat_id}: {str(e)}")
             if reply_func:
@@ -267,10 +269,12 @@ async def promote_army_bots(client, chat_id, reply_func=None):
         for bot_id, username in army_bot_ids.items():
             try:
                 # Check if bot is already in chat
+                found = False
                 async for member in client.get_chat_members(chat_id):
                     if member.user.id == bot_id:
+                        found = True
                         break
-                else:
+                if not found:
                     not_in_chat.append(username)
                     try:
                         await client.add_chat_members(chat_id, bot_id)
@@ -294,7 +298,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                                     logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
                                     failed_count += 1
                                     if reply_func:
-                                        await reply_func(f"Failed to promote @{username} after inviting. Please send a message to @{username} to register it with Telegram, then retry.")
+                                        await reply_func(f"Failed to promote @{username} after inviting. Please send a private /start to @{username} to register it with Telegram, then retry.")
                             except ChatAdminRequired:
                                 logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
                                 failed_count += 1
@@ -319,6 +323,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
             except Exception as e:
                 logger.error(f"Error checking presence of @{username} in chat {chat_id}: {str(e)}")
                 failed_count += 1
+            await asyncio.sleep(0.5)  # Rate limit delay
 
         if reply_func:
             result_text = f"Promotion complete: {promoted_count} army bots promoted, {failed_count} failed.\n"
@@ -360,7 +365,7 @@ async def background_army_promotion(client):
                 await asyncio.sleep(2)  # Rate limit delay between chats
         except Exception as e:
             logger.error(f"Error in background army promotion: {str(e)}")
-        await asyncio.sleep(600)  # Run every 10 minutes
+        await asyncio.sleep(300)  # Run every 5 minutes
 
 # Handlers
 @Bot.on_message(filters.command("addarmy") & filters.group & filters.user(int(BOT_OWNER)))
@@ -497,9 +502,8 @@ async def reaction_army_callback(bot, query):
         "<b>💂 My Reaction Army</b>\n\n"
         "1. Add the main bot (@{main_bot}) to your group and make it an admin with full permissions, including 'Add Admins' and 'Invite Users'.\n"
         "2. Add the army bots below to the group using the buttons or manually.\n"
-        "3. Send a private message to each army bot (e.g., /start) to register it with Telegram.\n"
-        "4. Use the /addarmy command in the group to detect and promote army bots to admins.\n"
-        "Note: The main bot will periodically check for army bots and promote them automatically.\n\n"
+        "3. Send a private /start to each army bot to register it with Telegram.\n"
+        "4. The main bot will automatically detect and promote existing army bots to admins in groups. Use /addarmy to force immediate promotion.\n\n"
         "<b>Army Bots:</b>\n"
     ).format(main_bot=BOT_USERNAME)
 
