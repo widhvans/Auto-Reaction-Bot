@@ -38,17 +38,17 @@ Bot = Client(
 
 # Army bot clients
 army_bots = []
+valid_army_bots = []
 for i, token in enumerate(ARMY_BOT_TOKENS):
     if token:
-        army_bots.append(
-            Client(
-                name=f"army_bot_{i+1}",
-                bot_token=token,
-                api_id=API_ID,
-                api_hash=API_HASH,
-                in_memory=True
-            )
+        army_bot = Client(
+            name=f"army_bot_{i+1}",
+            bot_token=token,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            in_memory=True
         )
+        army_bots.append((army_bot, token))
 
 # Positive Telegram reaction emojis only
 VALID_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏"]
@@ -107,7 +107,7 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
-CLONE_START_TEXT = f"<b>🤖 Parent Bot - @{BOT_USERNAME} 🤖\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʜ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
+CLONE_START_TEXT = f"<b>🤖 Parent Bot - @{BOT_USERNAME} 🤖\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Create a bot with @BotFather and send me the token here to clone me!"""
@@ -177,6 +177,23 @@ async def retry_get_me(army_bot, max_retries=3, timeout=30):
                 return None
             await asyncio.sleep(2)
 
+async def validate_army_bots():
+    global valid_army_bots
+    valid_army_bots = []
+    for army_bot, token in army_bots:
+        try:
+            await army_bot.start()
+            bot_info = await retry_get_me(army_bot)
+            if bot_info:
+                logger.info(f"Army bot validated: @{bot_info.username}")
+                valid_army_bots.append((army_bot, bot_info))
+            else:
+                logger.error(f"Skipping army bot with token {token[:10]}... due to failed get_me")
+                await army_bot.stop()
+        except Exception as e:
+            logger.error(f"Failed to validate army bot with token {token[:10]}...: {str(e)}")
+            await army_bot.stop()
+
 async def promote_army_bots(client, chat_id, reply_func=None):
     try:
         # Define admin privileges
@@ -193,14 +210,12 @@ async def promote_army_bots(client, chat_id, reply_func=None):
         }
 
         # Get army bot IDs
-        army_bot_ids = {}
-        for army_bot in army_bots:
-            bot_info = await retry_get_me(army_bot)
-            if bot_info:
-                army_bot_ids[bot_info.id] = bot_info.username
-            else:
-                logger.error("Skipping army bot due to failed get_me")
-                continue
+        army_bot_ids = {bot_info.id: bot_info.username for _, bot_info in valid_army_bots}
+        if not army_bot_ids:
+            logger.error(f"No valid army bots available for promotion in chat {chat_id}")
+            if reply_func:
+                await reply_func("No valid army bots available. Please check token validity and try again.")
+            return
 
         promoted_count = 0
         failed_count = 0
@@ -230,6 +245,8 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                             else:
                                 logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
                                 failed_count += 1
+                                if reply_func:
+                                    await reply_func(f"Failed to promote @{username}. Please send a message to @{username} to register it with Telegram, then retry.")
                         except ChatAdminRequired:
                             logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
                             failed_count += 1
@@ -276,6 +293,8 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                                 else:
                                     logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
                                     failed_count += 1
+                                    if reply_func:
+                                        await reply_func(f"Failed to promote @{username} after inviting. Please send a message to @{username} to register it with Telegram, then retry.")
                             except ChatAdminRequired:
                                 logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
                                 failed_count += 1
@@ -315,122 +334,36 @@ async def promote_army_bots(client, chat_id, reply_func=None):
 async def background_army_promotion(client):
     while True:
         try:
-            # Scan known chats from database
+            # Scan known group chats from database
             all_clones = await db.get_all_clones()
             chat_ids = set()
             for clone in all_clones:
-                chat_ids.update(clone.get('connected_chats', []))
-            
+                for chat_id in clone.get('connected_chats', []):
+                    try:
+                        chat = await client.get_chat(chat_id)
+                        if chat.type in ["group", "supergroup"]:  # Only process groups
+                            chat_ids.add(chat_id)
+                    except ChannelPrivate:
+                        logger.info(f"Skipping private chat {chat_id} in background promotion")
+                    except Exception as e:
+                        logger.error(f"Error checking chat {chat_id} type: {str(e)}")
+
             for chat_id in chat_ids:
                 try:
-                    # Verify main bot is in chat
+                    # Verify main bot is in chat and has admin rights
                     await client.get_chat_member(chat_id, "me")
                     await promote_army_bots(client, chat_id)
-                except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                except (UserNotParticipant, ChatAdminRequired):
                     logger.info(f"Main bot not admin in chat {chat_id}, skipping background promotion")
                 except Exception as e:
                     logger.error(f"Error in background promotion for chat {chat_id}: {str(e)}")
                 await asyncio.sleep(2)  # Rate limit delay between chats
         except Exception as e:
             logger.error(f"Error in background army promotion: {str(e)}")
-        await asyncio.sleep(300)  # Run every 5 minutes
-
-async def activate_clones_and_army():
-    # Start army bots
-    for army_bot in army_bots:
-        try:
-            await army_bot.start()
-            bot_info = await retry_get_me(army_bot)
-            if bot_info:
-                logger.info(f"Army bot started: @{bot_info.username}")
-                
-                @army_bot.on_message(filters.group | filters.channel)
-                async def army_reaction(client, msg):
-                    try:
-                        await client.get_chat_member(msg.chat.id, "me")
-                        await reaction_manager.add_reaction(client, msg)
-                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
-                        logger.info(f"Army bot @{bot_info.username} not admin in chat {msg.chat.id}, skipping reaction")
-                    except Exception as e:
-                        logger.error(f"Error in army bot reaction for @{bot_info.username}: {str(e)}")
-            else:
-                logger.error("Failed to start army bot due to get_me failure")
-        except Exception as e:
-            logger.error(f"Failed to start army bot: {str(e)}")
-
-    # Start clones
-    all_clones = await db.get_all_clones()
-    for clone in all_clones:
-        if clone['active']:
-            try:
-                clone_bot = Client(
-                    name=f"clone_{clone['username']}",
-                    bot_token=clone['token'],
-                    api_id=API_ID,
-                    api_hash=API_HASH,
-                    in_memory=True
-                )
-                
-                @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
-                async def clone_start(client, update):
-                    clone_data = await db.get_clone(clone['token'])
-                    if not clone_data or not clone_data['active']:
-                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
-                        return
-                    
-                    user_id = update.from_user.id
-                    await save_connected_user(user_id)
-                    await db.update_connected_users(clone_data['_id'], user_id)
-
-                    clone_buttons = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
-                        [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
-                        [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
-                    ])
-                    await update.reply_text(
-                        text=CLONE_START_TEXT,
-                        link_preview_options=LinkPreviewOptions(is_disabled=True),
-                        reply_markup=clone_buttons
-                    )
-                    logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id} with buttons using username @{clone['username']}")
-
-                @clone_bot.on_message(filters.private & ~filters.command(["start"]) & ~filters.me)
-                async def clone_reply(client, update):
-                    clone_data = await db.get_clone(clone['token'])
-                    if not clone_data or not clone_data['active']:
-                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
-                        return
-                    
-                    user_id = update.from_user.id
-                    await save_connected_user(user_id)
-                    await db.update_connected_users(clone_data['_id'], user_id)
-                    await reaction_manager.add_reaction(client, update)
-
-                @clone_bot.on_message(filters.group | filters.channel)
-                async def clone_reaction(client, msg):
-                    clone_data = await db.get_clone(clone['token'])
-                    if not clone_data or not clone_data['active']:
-                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
-                        return
-                    
-                    try:
-                        await client.get_chat_member(msg.chat.id, "me")
-                        await reaction_manager.add_reaction(client, msg)
-                        await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
-                        await db.clones.delete_one({'_id': clone_data['_id']})
-                        logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
-                    except Exception as e:
-                        logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
-                
-                asyncio.create_task(clone_bot.start())
-                logger.info(f"Clone bot started: @{clone['username']}")
-            except Exception as e:
-                logger.error(f"Failed to start clone bot @{clone['username']}: {str(e)}")
-                await db.clones.delete_one({'_id': clone['_id']})
+        await asyncio.sleep(600)  # Run every 10 minutes
 
 # Handlers
-@Bot.on_message(filters.command("addarmy") & (filters.group | filters.channel) & filters.user(int(BOT_OWNER)))
+@Bot.on_message(filters.command("addarmy") & filters.group & filters.user(int(BOT_OWNER)))
 async def add_army_command(bot, message):
     chat_id = message.chat.id
     logger.info(f"Add army command received from {message.from_user.id} in chat {chat_id}")
@@ -563,26 +496,23 @@ async def reaction_army_callback(bot, query):
     army_text = (
         "<b>💂 My Reaction Army</b>\n\n"
         "1. Add the main bot (@{main_bot}) to your group and make it an admin with full permissions, including 'Add Admins' and 'Invite Users'.\n"
-        "2. Add the army bots below to the group using the buttons.\n"
-        "3. Use the /addarmy command in the group to detect and promote army bots to admins.\n"
-        "Note: The main bot will also periodically check for army bots and promote them automatically.\n\n"
+        "2. Add the army bots below to the group using the buttons or manually.\n"
+        "3. Send a private message to each army bot (e.g., /start) to register it with Telegram.\n"
+        "4. Use the /addarmy command in the group to detect and promote army bots to admins.\n"
+        "Note: The main bot will periodically check for army bots and promote them automatically.\n\n"
         "<b>Army Bots:</b>\n"
     ).format(main_bot=BOT_USERNAME)
 
     army_buttons = []
-    for army_bot in army_bots:
-        bot_info = await retry_get_me(army_bot)
-        if bot_info:
-            army_text += f"- @{bot_info.username}\n"
-            army_buttons.append([
-                InlineKeyboardButton(text=f"👥 Add @{bot_info.username} to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart"),
-                InlineKeyboardButton(text=f"📺 Add @{bot_info.username} to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")
-            ])
-        else:
-            logger.error("Skipping army bot due to failed get_me")
+    for _, bot_info in valid_army_bots:
+        army_text += f"- @{bot_info.username}\n"
+        army_buttons.append([
+            InlineKeyboardButton(text=f"👥 Add @{bot_info.username} to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart"),
+            InlineKeyboardButton(text=f"📺 Add @{bot_info.username} to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")
+        ])
 
     if not army_buttons:
-        army_text += "No army bots available at the moment. Please try again later."
+        army_text += "No valid army bots available. Please check token validity and try again."
 
     await query.message.reply_text(
         text=army_text,
@@ -739,6 +669,79 @@ async def send_reaction(bot, msg: Message):
         logger.info(f"Main bot not admin in chat {msg.chat.id}, skipping reaction")
     except Exception as e:
         logger.error(f"Error in main bot reaction for chat {msg.chat.id}: {str(e)}")
+
+async def activate_clones_and_army():
+    await validate_army_bots()
+    # Start clones
+    all_clones = await db.get_all_clones()
+    for clone in all_clones:
+        if clone['active']:
+            try:
+                clone_bot = Client(
+                    name=f"clone_{clone['username']}",
+                    bot_token=clone['token'],
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                    in_memory=True
+                )
+                
+                @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
+                async def clone_start(client, update):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    user_id = update.from_user.id
+                    await save_connected_user(user_id)
+                    await db.update_connected_users(clone_data['_id'], user_id)
+
+                    clone_buttons = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                        [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                        [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
+                    ])
+                    await update.reply_text(
+                        text=CLONE_START_TEXT,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        reply_markup=clone_buttons
+                    )
+                    logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id} with buttons using username @{clone['username']}")
+
+                @clone_bot.on_message(filters.private & ~filters.command(["start"]) & ~filters.me)
+                async def clone_reply(client, update):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    user_id = update.from_user.id
+                    await save_connected_user(user_id)
+                    await db.update_connected_users(clone_data['_id'], user_id)
+                    await reaction_manager.add_reaction(client, update)
+
+                @clone_bot.on_message(filters.group | filters.channel)
+                async def clone_reaction(client, msg):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    try:
+                        await client.get_chat_member(msg.chat.id, "me")
+                        await reaction_manager.add_reaction(client, msg)
+                        await db.update_connected_chats(clone_data['_id'], msg.chat.id)
+                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                        await db.clones.delete_one({'_id': clone_data['_id']})
+                        logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
+                    except Exception as e:
+                        logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
+                
+                asyncio.create_task(clone_bot.start())
+                logger.info(f"Clone bot started: @{clone['username']}")
+            except Exception as e:
+                logger.error(f"Failed to start clone bot @{clone['username']}: {str(e)}")
+                await db.clones.delete_one({'_id': clone['_id']})
 
 async def main():
     await Bot.start()
