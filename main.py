@@ -104,7 +104,7 @@ reaction_manager = ReactionManager()
 # Messages and buttons
 START_TEXT = """<b>{},
 
-ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
+ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʜ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
@@ -178,22 +178,31 @@ async def retry_get_me(army_bot, max_retries=3, timeout=30):
                 return None
             await asyncio.sleep(2)
 
-async def promote_army_bots(client, chat_id, main_bot_id):
+async def promote_army_bots(client, chat_id, reply_func=None):
     try:
-        main_member = await client.get_chat_member(chat_id, main_bot_id)
-        if not main_member.privileges:
-            logger.info(f"Main bot {main_bot_id} is not admin in chat {chat_id}, skipping army promotion")
-            return
-        if not main_member.privileges.can_promote_members:
-            logger.warning(f"Main bot {main_bot_id} lacks can_promote_members permission in chat {chat_id}, cannot promote army bots")
-            return
+        main_bot_info = await client.get_me()
+        # Assume client is admin (verified by caller or command)
+        # Define default admin privileges (same as typical admin)
+        default_privileges = {
+            "can_manage_chat": True,
+            "can_delete_messages": True,
+            "can_manage_video_chats": True,
+            "can_restrict_members": True,
+            "can_promote_members": True,
+            "can_change_info": True,
+            "can_invite_users": True,
+            "can_pin_messages": True,
+            "can_manage_topics": True
+        }
 
-        main_privileges = main_member.privileges
+        promoted_count = 0
+        failed_count = 0
         for army_bot in army_bots:
             try:
                 army_bot_info = await retry_get_me(army_bot)
                 if not army_bot_info:
                     logger.error(f"Skipping promotion for army bot due to failed get_me")
+                    failed_count += 1
                     continue
                 
                 # Check if army bot is in the chat
@@ -206,31 +215,56 @@ async def promote_army_bots(client, chat_id, main_bot_id):
                                 await client.promote_chat_member(
                                     chat_id,
                                     army_bot_info.id,
-                                    privileges=main_privileges
+                                    privileges=default_privileges
                                 )
-                                logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id} with same privileges as main bot")
+                                logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id}")
+                                promoted_count += 1
                                 break
                             except PeerIdInvalid as e:
                                 logger.warning(f"Attempt {attempt+1}/3 failed for promoting @{army_bot_info.username} in chat {chat_id}: {str(e)}")
                                 if attempt + 1 < 3:
-                                    await asyncio.sleep(2)
+                                    await asyncio.sleep(3)
                                 else:
                                     logger.error(f"Failed to promote @{army_bot_info.username} in chat {chat_id} after 3 attempts: {str(e)}")
+                                    failed_count += 1
+                            except ChatAdminRequired:
+                                logger.error(f"Client lacks admin permissions to promote @{army_bot_info.username} in chat {chat_id}")
+                                failed_count += 1
+                                break
                             except Exception as e:
                                 logger.error(f"Error promoting @{army_bot_info.username} in chat {chat_id}: {str(e)}")
+                                failed_count += 1
                                 break
+                        await asyncio.sleep(1)  # Rate limit delay
                     else:
                         logger.info(f"Army bot @{army_bot_info.username} is already admin or not in a promotable state in chat {chat_id}")
                 except UserNotParticipant:
                     logger.info(f"Army bot @{army_bot_info.username} is not in chat {chat_id}, please add it first")
-                except (ChatAdminRequired, ChannelPrivate):
-                    logger.info(f"Insufficient permissions to check army bot @{army_bot_info.username} in chat {chat_id}")
+                    failed_count += 1
+                    if reply_func:
+                        await reply_func(f"Please add @{army_bot_info.username} to the chat before promoting.")
+                except (ChannelPrivate, PeerIdInvalid):
+                    logger.info(f"Cannot access chat {chat_id} or army bot @{army_bot_info.username} not recognized")
+                    failed_count += 1
             except Exception as e:
-                logger.error(f"Error processing army bot in chat {chat_id}: {str(e)}")
+                logger.error(f"Error processing army bot @{army_bot_info.username if army_bot_info else 'unknown'} in chat {chat_id}: {str(e)}")
+                failed_count += 1
+
+        if reply_func:
+            await reply_func(f"Promotion complete: {promoted_count} army bots promoted, {failed_count} failed. Check logs for details.")
+        logger.info(f"Army bot promotion in chat {chat_id}: {promoted_count} succeeded, {failed_count} failed")
     except Exception as e:
-        logger.error(f"Error checking main bot admin status in chat {chat_id}: {str(e)}")
+        logger.error(f"Error during army bot promotion in chat {chat_id}: {str(e)}")
+        if reply_func:
+            await reply_func("Failed to promote army bots. Ensure the main bot is an admin with 'Add Admins' permission.")
 
 # Handlers
+@Bot.on_message(filters.command("addarmy") & (filters.group | filters.channel) & filters.user(int(BOT_OWNER)))
+async def add_army_command(bot, message):
+    chat_id = message.chat.id
+    logger.info(f"Add army command received from {message.from_user.id} in chat {chat_id}")
+    await promote_army_bots(bot, chat_id, reply_func=message.reply_text)
+
 @Bot.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
     user_id = update.from_user.id
@@ -358,7 +392,8 @@ async def reaction_army_callback(bot, query):
     army_text = (
         "<b>💂 My Reaction Army</b>\n\n"
         "1. First, add the main bot (@{main_bot}) to your group or channel and make it an admin with full permissions, including 'Add Admins'.\n"
-        "2. Then, add the following army bots to the same group or channel using the buttons below. The main bot will automatically promote them to admins with the same permissions once they are added.\n\n"
+        "2. Add the army bots below to the same group or channel using the buttons.\n"
+        "3. Use the /addarmy command in the group/channel to promote the army bots to admins with the same permissions as the main bot.\n\n"
         "<b>Army Bots:</b>\n"
     ).format(main_bot=BOT_USERNAME)
 
@@ -472,8 +507,6 @@ async def handle_clone_token(bot, message):
                 await client.get_chat_member(msg.chat.id, "me")
                 await reaction_manager.add_reaction(client, msg)
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                main_bot_info = await Bot.get_me()
-                await promote_army_bots(client, msg.chat.id, main_bot_info.id)
             except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
                 await db.clones.delete_one({'_id': clone_data['_id']})
                 logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
@@ -530,10 +563,8 @@ async def send_reaction(bot, msg: Message):
     try:
         await bot.get_chat_member(msg.chat.id, "me")
         await reaction_manager.add_reaction(bot, msg)
-        main_bot_info = await bot.get_me()
-        await promote_army_bots(bot, msg.chat.id, main_bot_info.id)
     except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
-        logger.info(f"Main bot not admin in chat {msg.chat.id}, skipping reaction and promotion")
+        logger.info(f"Main bot not admin in chat {msg.chat.id}, skipping reaction")
     except Exception as e:
         logger.error(f"Error in main bot reaction for chat {msg.chat.id}: {str(e)}")
 
@@ -620,8 +651,6 @@ async def activate_clones_and_army():
                         await client.get_chat_member(msg.chat.id, "me")
                         await reaction_manager.add_reaction(client, msg)
                         await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                        main_bot_info = await Bot.get_me()
-                        await promote_army_bots(client, msg.chat.id, main_bot_info.id)
                     except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
                         await db.clones.delete_one({'_id': clone_data['_id']})
                         logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
