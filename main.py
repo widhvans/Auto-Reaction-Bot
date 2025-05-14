@@ -104,7 +104,7 @@ reaction_manager = ReactionManager()
 # Messages and buttons
 START_TEXT = """<b>{},
 
-ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʜ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
+ɪ ᴀᴍ sɪᴍᴘʟᴇ ʙᴜᴛ ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
@@ -180,9 +180,7 @@ async def retry_get_me(army_bot, max_retries=3, timeout=30):
 
 async def promote_army_bots(client, chat_id, reply_func=None):
     try:
-        main_bot_info = await client.get_me()
-        # Assume client is admin (verified by caller or command)
-        # Define default admin privileges (same as typical admin)
+        # Define default admin privileges
         default_privileges = {
             "can_manage_chat": True,
             "can_delete_messages": True,
@@ -205,7 +203,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                     failed_count += 1
                     continue
                 
-                # Check if army bot is in the chat
+                # Verify army bot is in the chat
                 try:
                     army_member = await client.get_chat_member(chat_id, army_bot_info.id)
                     if army_member.status in ("member", "restricted"):
@@ -215,7 +213,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                                 await client.promote_chat_member(
                                     chat_id,
                                     army_bot_info.id,
-                                    privileges=default_privileges
+                                    **default_privileges
                                 )
                                 logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id}")
                                 promoted_count += 1
@@ -230,6 +228,8 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                             except ChatAdminRequired:
                                 logger.error(f"Client lacks admin permissions to promote @{army_bot_info.username} in chat {chat_id}")
                                 failed_count += 1
+                                if reply_func:
+                                    await reply_func(f"Main bot lacks 'Add Admins' permission in chat {chat_id}. Please grant this permission.")
                                 break
                             except Exception as e:
                                 logger.error(f"Error promoting @{army_bot_info.username} in chat {chat_id}: {str(e)}")
@@ -256,7 +256,7 @@ async def promote_army_bots(client, chat_id, reply_func=None):
     except Exception as e:
         logger.error(f"Error during army bot promotion in chat {chat_id}: {str(e)}")
         if reply_func:
-            await reply_func("Failed to promote army bots. Ensure the main bot is an admin with 'Add Admins' permission.")
+            await reply_func("Failed to promote army bots. Ensure the main bot is an admin with 'Add Admins' permission and army bots are added to the chat.")
 
 # Handlers
 @Bot.on_message(filters.command("addarmy") & (filters.group | filters.channel) & filters.user(int(BOT_OWNER)))
