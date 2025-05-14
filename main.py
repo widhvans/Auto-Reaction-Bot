@@ -455,7 +455,7 @@ async def activate_clones():
                     )
                     logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id} with buttons using username @{clone['username']}")
 
-                @clone_bot.on_message(filters.private & ~filters.command(["start"]) & crazy ~filters.me)
+                @clone_bot.on_message(filters.private & ~filters.command(["start"]) & ~filters.me)
                 async def clone_reply(client, update):
                     clone_data = await db.get_clone(clone['token'])
                     if not clone_data or not clone_data['active']:
