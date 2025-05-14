@@ -6,10 +6,10 @@ import aiofiles
 import logging
 import traceback
 from random import choice
-from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
-from pyrogram.errors import *
+from pyrogram.errors import FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired, ChannelPrivate
 from database import Database
 from config import *
 
@@ -34,37 +34,22 @@ Bot = Client(
     bot_token=BOT_TOKEN,
     api_id=API_ID,
     api_hash=API_HASH,
-    in_memory=True,
-    timeout=30  # Increased timeout to 30 seconds
+    in_memory=True
 )
 
-# Army bot clients and cached info
+# Army bot clients
 army_bots = []
-army_bot_info_cache = {}  # Cache for bot usernames
-
-async def initialize_army_bots():
-    for i, token in enumerate(ARMY_BOT_TOKENS):
-        if not token:
-            logger.warning(f"Army bot token {i+1} is empty, skipping")
-            continue
-        try:
-            client = Client(
+for i, token in enumerate(ARMY_BOT_TOKENS):
+    if token:
+        army_bots.append(
+            Client(
                 name=f"army_bot_{i+1}",
                 bot_token=token,
                 api_id=API_ID,
                 api_hash=API_HASH,
-                in_memory=True,
-                timeout=30
+                in_memory=True
             )
-            await client.start()
-            bot_info = await client.get_me()
-            army_bots.append(client)
-            army_bot_info_cache[token] = bot_info
-            logger.info(f"Army bot initialized: @{bot_info.username} (token {i+1})")
-            await client.stop()
-        except Exception as e:
-            logger.error(f"Failed to initialize army bot {i+1} with token {token[:10]}...: {str(e)}")
-            continue
+        )
 
 # Positive Telegram reaction emojis only
 VALID_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏"]
@@ -192,11 +177,7 @@ async def promote_army_bots(client, chat_id, main_bot_id):
         main_privileges = main_member.privileges
         for army_bot in army_bots:
             try:
-                army_bot_info = army_bot_info_cache.get(ARMY_BOT_TOKENS[army_bots.index(army_bot)])
-                if not army_bot_info:
-                    logger.warning(f"No cached info for army bot {army_bots.index(army_bot)+1}, fetching")
-                    army_bot_info = await army_bot.get_me()
-                    army_bot_info_cache[ARMY_BOT_TOKENS[army_bots.index(army_bot)]] = army_bot_info
+                army_bot_info = await army_bot.get_me()
                 army_member = await client.get_chat_member(chat_id, army_bot_info.id)
                 if army_member.status in ("member", "restricted"):
                     await client.promote_chat_member(
@@ -205,11 +186,10 @@ async def promote_army_bots(client, chat_id, main_bot_id):
                         privileges=main_privileges
                     )
                     logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id} with same privileges as main bot")
-                await asyncio.sleep(0.5)  # Rate limit
-            except (UserNotParticipant, ChatAdminRequired):
-                logger.info(f"Army bot @{army_bot_info.username} not in chat {chat_id} or insufficient permissions")
+            except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                logger.info(f"Army bot {army_bot_info.id} not in chat {chat_id} or insufficient permissions")
             except Exception as e:
-                logger.error(f"Error promoting army bot @{army_bot_info.username} in chat {chat_id}: {str(e)}")
+                logger.error(f"Error promoting army bot in chat {chat_id}: {str(e)}")
     except Exception as e:
         logger.error(f"Error checking main bot admin status in chat {chat_id}: {str(e)}")
 
@@ -336,6 +316,17 @@ async def broadcast(bot, update):
         logger.error(error_msg)
         await update.reply_text("❌ An error occurred during broadcast!")
 
+async def retry_get_me(army_bot, max_retries=3, timeout=30):
+    for attempt in range(max_retries):
+        try:
+            return await asyncio.wait_for(army_bot.get_me(), timeout=timeout)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Attempt {attempt+1}/{max_retries} failed for army bot get_me: {str(e)}")
+            if attempt + 1 == max_retries:
+                logger.error(f"Max retries reached for army bot get_me: {str(e)}")
+                return None
+            await asyncio.sleep(2)
+
 @Bot.on_callback_query(filters.regex("reaction_army"))
 async def reaction_army_callback(bot, query):
     army_text = (
@@ -347,33 +338,19 @@ async def reaction_army_callback(bot, query):
     ).format(main_bot=BOT_USERNAME)
 
     army_buttons = []
-    for i, token in enumerate(ARMY_BOT_TOKENS):
-        if not token:
-            logger.warning(f"Army bot token {i+1} is empty, skipping in reaction army list")
-            continue
-        try:
-            bot_info = army_bot_info_cache.get(token)
-            if not bot_info:
-                logger.warning(f"No cached info for army bot {i+1}, fetching")
-                army_bot = next((b for b in army_bots if ARMY_BOT_TOKENS[army_bots.index(b)] == token), None)
-                if army_bot:
-                    bot_info = await army_bot.get_me()
-                    army_bot_info_cache[token] = bot_info
-                else:
-                    logger.error(f"Army bot {i+1} not initialized, skipping")
-                    continue
+    for army_bot in army_bots:
+        bot_info = await retry_get_me(army_bot)
+        if bot_info:
             army_text += f"- @{bot_info.username}\n"
             army_buttons.append([
                 InlineKeyboardButton(text=f"👥 Add @{bot_info.username} to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart"),
                 InlineKeyboardButton(text=f"📺 Add @{bot_info.username} to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")
             ])
-            await asyncio.sleep(0.5)  # Rate limit to avoid flood
-        except Exception as e:
-            logger.error(f"Error getting army bot {i+1} info: {str(e)}")
-            continue
+        else:
+            logger.error("Skipping army bot due to failed get_me")
 
     if not army_buttons:
-        army_text += "No army bots available. Please check token configuration."
+        army_text += "No army bots available at the moment. Please try again later."
 
     await query.message.reply_text(
         text=army_text,
@@ -396,7 +373,7 @@ async def handle_clone_token(bot, message):
         return
 
     try:
-        temp_client = Client(name="temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True, timeout=30)
+        temp_client = Client(name="temp", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         try:
             await temp_client.start()
         except FloodWait as e:
@@ -422,7 +399,7 @@ async def handle_clone_token(bot, message):
         )
         logger.info(f"Bot cloned successfully: @{bot_info.username} with buttons using username @{bot_info.username}")
 
-        clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True, timeout=30)
+        clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
         @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
         async def clone_start(client, update):
@@ -463,20 +440,20 @@ async def handle_clone_token(bot, message):
         async def clone_reaction(client, msg):
             clone_data = await db.get_clone(token)
             if not clone_data or not clone_data['active']:
-                logger.warning(f"Clone @{bot_info.username} is inactive or not found")
+                logger.warning(f"Clone @{clone['username']} is inactive or not found")
                 return
             
             try:
                 await client.get_chat_member(msg.chat.id, "me")
                 await reaction_manager.add_reaction(client, msg)
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                main_bot_info = await bot.get_me()
+                main_bot_info = await Bot.get_me()  # Fixed: Changed 'bot' to 'Bot'
                 await promote_army_bots(client, msg.chat.id, main_bot_info.id)
-            except (UserNotParticipant, ChatAdminRequired):
+            except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
                 await db.clones.delete_one({'_id': clone_data['_id']})
-                logger.info(f"Bot @{bot_info.username} disconnected and removed from database due to lack of access in {msg.chat.id}")
+                logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
             except Exception as e:
-                logger.error(f"Error in reaction for @{bot_info.username}: {str(e)}")
+                logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
         
         asyncio.create_task(clone_bot.start())
         logger.info(f"Clone bot started: @{bot_info.username}")
@@ -530,7 +507,7 @@ async def send_reaction(bot, msg: Message):
         await reaction_manager.add_reaction(bot, msg)
         main_bot_info = await bot.get_me()
         await promote_army_bots(bot, msg.chat.id, main_bot_info.id)
-    except (UserNotParticipant, ChatAdminRequired):
+    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
         logger.info(f"Main bot not admin in chat {msg.chat.id}, skipping reaction and promotion")
     except Exception as e:
         logger.error(f"Error in main bot reaction for chat {msg.chat.id}: {str(e)}")
@@ -541,23 +518,23 @@ async def activate_clones_and_army():
     for army_bot in army_bots:
         try:
             await army_bot.start()
-            bot_info = army_bot_info_cache.get(ARMY_BOT_TOKENS[army_bots.index(army_bot)])
-            if not bot_info:
-                bot_info = await army_bot.get_me()
-                army_bot_info_cache[ARMY_BOT_TOKENS[army_bots.index(army_bot)] = bot_info
-            logger.info(f"Army bot started: @{bot_info.username}")
-            
-            @army_bot.on_message(filters.group | filters.channel)
-            async def army_reaction(client, msg):
-                try:
-                    await client.get_chat_member(msg.chat.id, "me")
-                    await reaction_manager.add_reaction(client, msg)
-                except (UserNotParticipant, ChatAdminRequired):
-                    logger.info(f"Army bot @{bot_info.username} not admin in chat {msg.chat.id}, skipping reaction")
-                except Exception as e:
-                    logger.error(f"Error in army bot reaction for @{bot_info.username}: {str(e)}")
+            bot_info = await retry_get_me(army_bot)
+            if bot_info:
+                logger.info(f"Army bot started: @{bot_info.username}")
+                
+                @army_bot.on_message(filters.group | filters.channel)
+                async def army_reaction(client, msg):
+                    try:
+                        await client.get_chat_member(msg.chat.id, "me")
+                        await reaction_manager.add_reaction(client, msg)
+                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                        logger.info(f"Army bot @{bot_info.username} not admin in chat {msg.chat.id}, skipping reaction")
+                    except Exception as e:
+                        logger.error(f"Error in army bot reaction for @{bot_info.username}: {str(e)}")
+            else:
+                logger.error("Failed to start army bot due to get_me failure")
         except Exception as e:
-            logger.error(f"Failed to start army bot @{bot_info.username if 'bot_info' in locals() else 'unknown'}: {str(e)}")
+            logger.error(f"Failed to start army bot: {str(e)}")
 
     # Start clones
     all_clones = await db.get_all_clones()
@@ -569,8 +546,7 @@ async def activate_clones_and_army():
                     bot_token=clone['token'],
                     api_id=API_ID,
                     api_hash=API_HASH,
-                    in_memory=True,
-                    timeout=30
+                    in_memory=True
                 )
                 
                 @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
@@ -619,9 +595,9 @@ async def activate_clones_and_army():
                         await client.get_chat_member(msg.chat.id, "me")
                         await reaction_manager.add_reaction(client, msg)
                         await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                        main_bot_info = await bot.get_me()
+                        main_bot_info = await Bot.get_me()  # Fixed: Changed 'bot' to 'Bot'
                         await promote_army_bots(client, msg.chat.id, main_bot_info.id)
-                    except (UserNotParticipant, ChatAdminRequired):
+                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
                         await db.clones.delete_one({'_id': clone_data['_id']})
                         logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
                     except Exception as e:
@@ -634,9 +610,6 @@ async def activate_clones_and_army():
                 await db.clones.delete_one({'_id': clone['_id']})
 
 async def main():
-    # Initialize army bots first
-    await initialize_army_bots()
-    # Start main bot
     await Bot.start()
     logger.info("Main Bot Started!")
     asyncio.create_task(reaction_manager.process_reactions())
