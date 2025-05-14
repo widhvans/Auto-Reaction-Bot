@@ -7,7 +7,6 @@ import logging
 import traceback
 from random import choice
 from pyrogram import Client, filters
-from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import *
 from database import Database
@@ -37,8 +36,22 @@ Bot = Client(
     in_memory=True
 )
 
+# Army bot clients
+army_bots = []
+for i, token in enumerate(ARMY_BOT_TOKENS):
+    if token:
+        army_bots.append(
+            Client(
+                name=f"army_bot_{i+1}",
+                bot_token=token,
+                api_id=API_ID,
+                api_hash=API_HASH,
+                in_memory=True
+            )
+        )
+
 # Positive Telegram reaction emojis only
-VALID_EMOJIS = ["👍", "❤", "🔥", "🥳", "👏", "😁", "😍"]
+VALID_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏"]
 
 # Define UPDATE_CHANNEL since it's not in config.py
 UPDATE_CHANNEL = "https://t.me/joinnowearn"
@@ -79,8 +92,7 @@ class ReactionManager:
                 await asyncio.sleep(min(e.value, 5))
                 await self.add_reaction(client, msg)
             except ReactionInvalid:
-                logger.warning(f"Invalid reaction attempted in chat {msg.chat.id}, retrying")
-                await self.add_reaction(client, msg)
+                logger.warning(f"Invalid reaction {emoji} attempted in chat {msg.chat.id}, skipping")
             except Exception as e:
                 logger.error(f"Reaction error in chat {msg.chat.id}: {str(e)}")
             finally:
@@ -106,6 +118,7 @@ START_BUTTONS = InlineKeyboardMarkup(
          InlineKeyboardButton(text='📋 ᴍʏ ʙᴏᴛs', callback_data='my_bots')],
         [InlineKeyboardButton(text='🔌 ᴅɪsᴄᴏɴɴᴇᴄᴛ ᴀʟʟ ᴄʟᴏɴᴇᴅ', callback_data='disconnect_all')],
         [InlineKeyboardButton(text='🔔 ᴜᴩᴅᴀᴛᴇꜱ', url=UPDATE_CHANNEL)],
+        [InlineKeyboardButton(text='💂 ᴍʏ ʀᴇᴀᴄᴛɪᴏɴ ᴀʀᴍʏ', callback_data='reaction_army')]
     ]
 )
 
@@ -152,6 +165,32 @@ async def get_fsub(bot, message):
     except Exception as e:
         logger.error(f"Error checking subscription for {user_id}: {str(e)}")
         return False
+
+async def promote_army_bots(client, chat_id, main_bot_id):
+    try:
+        main_member = await client.get_chat_member(chat_id, main_bot_id)
+        if not main_member.privileges:
+            logger.info(f"Main bot {main_bot_id} is not admin in chat {chat_id}, skipping army promotion")
+            return
+
+        main_privileges = main_member.privileges
+        for army_bot in army_bots:
+            try:
+                army_bot_info = await army_bot.get_me()
+                army_member = await client.get_chat_member(chat_id, army_bot_info.id)
+                if army_member.status in ("member", "restricted"):
+                    await client.promote_chat_member(
+                        chat_id,
+                        army_bot_info.id,
+                        privileges=main_privileges
+                    )
+                    logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id} with same privileges as main bot")
+            except (UserNotParticipant, ChatAdminRequired):
+                logger.info(f"Army bot {army_bot_info.id} not in chat {chat_id} or insufficient permissions")
+            except Exception as e:
+                logger.error(f"Error promoting army bot in chat {chat_id}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error checking main bot admin status in chat {chat_id}: {str(e)}")
 
 # Handlers
 @Bot.on_message(filters.private & filters.command(["start"]))
@@ -276,6 +315,36 @@ async def broadcast(bot, update):
         logger.error(error_msg)
         await update.reply_text("❌ An error occurred during broadcast!")
 
+@Bot.on_callback_query(filters.regex("reaction_army"))
+async def reaction_army_callback(bot, query):
+    army_text = (
+        "<b>💂 My Reaction Army</b>\n\n"
+        "1. First, add the main bot (@{main_bot}) to your group or channel and make it an admin with full permissions.\n"
+        "2. Then, add the following army bots to the same group or channel. You don't need to make them admins manually; "
+        "the main bot will automatically promote them to admins with the same permissions once detected.\n\n"
+        "<b>Army Bots:</b>\n"
+    ).format(main_bot=BOT_USERNAME)
+
+    army_buttons = []
+    for army_bot in army_bots:
+        try:
+            bot_info = await army_bot.get_me()
+            army_text += f"- @{bot_info.username}\n"
+            army_buttons.append([
+                InlineKeyboardButton(text=f"👥 Add @{bot_info.username} to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart"),
+                InlineKeyboardButton(text=f"📺 Add @{bot_info.username} to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")
+            ])
+        except Exception as e:
+            logger.error(f"Error getting army bot info: {str(e)}")
+            continue
+
+    await query.message.reply_text(
+        text=army_text,
+        reply_markup=InlineKeyboardMarkup(army_buttons),
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+    logger.info(f"Reaction army list requested by {query.from_user.id}")
+
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
@@ -364,6 +433,9 @@ async def handle_clone_token(bot, message):
                 await client.get_chat_member(msg.chat.id, "me")
                 await reaction_manager.add_reaction(client, msg)
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
+                # Promote army bots if main bot is admin
+                main_bot_info = await bot.get_me()
+                await promote_army_bots(client, msg.chat.id, main_bot_info.id)
             except (UserNotParticipant, ChatAdminRequired):
                 await db.clones.delete_one({'_id': clone_data['_id']})
                 logger.info(f"Bot @{bot_info.username} disconnected and removed from database due to lack of access in {msg.chat.id}")
@@ -417,10 +489,38 @@ async def disconnect_all_callback(bot, query):
 # Reaction handling for main bot
 @Bot.on_message(filters.group | filters.channel)
 async def send_reaction(bot, msg: Message):
-    await reaction_manager.add_reaction(bot, msg)
+    try:
+        await bot.get_chat_member(msg.chat.id, "me")
+        await reaction_manager.add_reaction(bot, msg)
+        main_bot_info = await bot.get_me()
+        await promote_army_bots(bot, msg.chat.id, main_bot_info.id)
+    except (UserNotParticipant, ChatAdminRequired):
+        logger.info(f"Main bot not admin in chat {msg.chat.id}, skipping reaction and promotion")
+    except Exception as e:
+        logger.error(f"Error in main bot reaction for chat {msg.chat.id}: {str(e)}")
 
-# Activate clones on startup
-async def activate_clones():
+# Activate clones and army bots on startup
+async def activate_clones_and_army():
+    # Start army bots
+    for army_bot in army_bots:
+        try:
+            await army_bot.start()
+            bot_info = await army_bot.get_me()
+            logger.info(f"Army bot started: @{bot_info.username}")
+            
+            @army_bot.on_message(filters.group | filters.channel)
+            async def army_reaction(client, msg):
+                try:
+                    await client.get_chat_member(msg.chat.id, "me")
+                    await reaction_manager.add_reaction(client, msg)
+                except (UserNotParticipant, ChatAdminRequired):
+                    logger.info(f"Army bot @{bot_info.username} not admin in chat {msg.chat.id}, skipping reaction")
+                except Exception as e:
+                    logger.error(f"Error in army bot reaction for @{bot_info.username}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to start army bot: {str(e)}")
+
+    # Start clones
     all_clones = await db.get_all_clones()
     for clone in all_clones:
         if clone['active']:
@@ -479,6 +579,8 @@ async def activate_clones():
                         await client.get_chat_member(msg.chat.id, "me")
                         await reaction_manager.add_reaction(client, msg)
                         await db.update_connected_chats(clone_data['_id'], msg.chat.id)
+                        main_bot_info = await bot.get_me()
+                        await promote_army_bots(client, msg.chat.id, main_bot_info.id)
                     except (UserNotParticipant, ChatAdminRequired):
                         await db.clones.delete_one({'_id': clone_data['_id']})
                         logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
@@ -495,7 +597,7 @@ async def main():
     await Bot.start()
     logger.info("Main Bot Started!")
     asyncio.create_task(reaction_manager.process_reactions())
-    await activate_clones()
+    await activate_clones_and_army()
     await asyncio.Future()
 
 if __name__ == "__main__":
