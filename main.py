@@ -9,7 +9,7 @@ from random import choice
 from pyrogram.errors import FloodWait
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
-from pyrogram.errors import FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired, ChannelPrivate
+from pyrogram.errors import FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired, ChannelPrivate, PeerIdInvalid
 from database import Database
 from config import *
 
@@ -167,29 +167,66 @@ async def get_fsub(bot, message):
         logger.error(f"Error checking subscription for {user_id}: {str(e)}")
         return False
 
+async def retry_get_me(army_bot, max_retries=3, timeout=30):
+    for attempt in range(max_retries):
+        try:
+            return await asyncio.wait_for(army_bot.get_me(), timeout=timeout)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Attempt {attempt+1}/{max_retries} failed for army bot get_me: {str(e)}")
+            if attempt + 1 == max_retries:
+                logger.error(f"Max retries reached for army bot get_me: {str(e)}")
+                return None
+            await asyncio.sleep(2)
+
 async def promote_army_bots(client, chat_id, main_bot_id):
     try:
         main_member = await client.get_chat_member(chat_id, main_bot_id)
         if not main_member.privileges:
             logger.info(f"Main bot {main_bot_id} is not admin in chat {chat_id}, skipping army promotion")
             return
+        if not main_member.privileges.can_promote_members:
+            logger.warning(f"Main bot {main_bot_id} lacks can_promote_members permission in chat {chat_id}, cannot promote army bots")
+            return
 
         main_privileges = main_member.privileges
         for army_bot in army_bots:
             try:
-                army_bot_info = await army_bot.get_me()
-                army_member = await client.get_chat_member(chat_id, army_bot_info.id)
-                if army_member.status in ("member", "restricted"):
-                    await client.promote_chat_member(
-                        chat_id,
-                        army_bot_info.id,
-                        privileges=main_privileges
-                    )
-                    logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id} with same privileges as main bot")
-            except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
-                logger.info(f"Army bot {army_bot_info.id} not in chat {chat_id} or insufficient permissions")
+                army_bot_info = await retry_get_me(army_bot)
+                if not army_bot_info:
+                    logger.error(f"Skipping promotion for army bot due to failed get_me")
+                    continue
+                
+                # Check if army bot is in the chat
+                try:
+                    army_member = await client.get_chat_member(chat_id, army_bot_info.id)
+                    if army_member.status in ("member", "restricted"):
+                        # Retry promotion up to 3 times with delay
+                        for attempt in range(3):
+                            try:
+                                await client.promote_chat_member(
+                                    chat_id,
+                                    army_bot_info.id,
+                                    privileges=main_privileges
+                                )
+                                logger.info(f"Promoted army bot @{army_bot_info.username} to admin in chat {chat_id} with same privileges as main bot")
+                                break
+                            except PeerIdInvalid as e:
+                                logger.warning(f"Attempt {attempt+1}/3 failed for promoting @{army_bot_info.username} in chat {chat_id}: {str(e)}")
+                                if attempt + 1 < 3:
+                                    await asyncio.sleep(2)
+                                else:
+                                    logger.error(f"Failed to promote @{army_bot_info.username} in chat {chat_id} after 3 attempts: {str(e)}")
+                            except Exception as e:
+                                logger.error(f"Error promoting @{army_bot_info.username} in chat {chat_id}: {str(e)}")
+                                break
+                    else:
+                        logger.info(f"Army bot @{army_bot_info.username} is already admin or not in a promotable state in chat {chat_id}")
+                except UserNotParticipant:
+                    logger.info(f"Army bot @{army_bot_info.username} is not in chat {chat_id}, please add it first")
+                except (ChatAdminRequired, ChannelPrivate):
+                    logger.info(f"Insufficient permissions to check army bot @{army_bot_info.username} in chat {chat_id}")
             except Exception as e:
-                logger.error(f"Error promoting army bot in chat {chat_id}: {str(e)}")
+                logger.error(f"Error processing army bot in chat {chat_id}: {str(e)}")
     except Exception as e:
         logger.error(f"Error checking main bot admin status in chat {chat_id}: {str(e)}")
 
@@ -316,24 +353,12 @@ async def broadcast(bot, update):
         logger.error(error_msg)
         await update.reply_text("❌ An error occurred during broadcast!")
 
-async def retry_get_me(army_bot, max_retries=3, timeout=30):
-    for attempt in range(max_retries):
-        try:
-            return await asyncio.wait_for(army_bot.get_me(), timeout=timeout)
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.warning(f"Attempt {attempt+1}/{max_retries} failed for army bot get_me: {str(e)}")
-            if attempt + 1 == max_retries:
-                logger.error(f"Max retries reached for army bot get_me: {str(e)}")
-                return None
-            await asyncio.sleep(2)
-
 @Bot.on_callback_query(filters.regex("reaction_army"))
 async def reaction_army_callback(bot, query):
     army_text = (
         "<b>💂 My Reaction Army</b>\n\n"
-        "1. First, add the main bot (@{main_bot}) to your group or channel and make it an admin with full permissions.\n"
-        "2. Then, add the following army bots to the same group or channel. You don't need to make them admins manually; "
-        "the main bot will automatically promote them to admins with the same permissions once detected.\n\n"
+        "1. First, add the main bot (@{main_bot}) to your group or channel and make it an admin with full permissions, including 'Add Admins'.\n"
+        "2. Then, add the following army bots to the same group or channel using the buttons below. The main bot will automatically promote them to admins with the same permissions once they are added.\n\n"
         "<b>Army Bots:</b>\n"
     ).format(main_bot=BOT_USERNAME)
 
@@ -447,7 +472,7 @@ async def handle_clone_token(bot, message):
                 await client.get_chat_member(msg.chat.id, "me")
                 await reaction_manager.add_reaction(client, msg)
                 await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                main_bot_info = await Bot.get_me()  # Fixed: Changed 'bot' to 'Bot'
+                main_bot_info = await Bot.get_me()
                 await promote_army_bots(client, msg.chat.id, main_bot_info.id)
             except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
                 await db.clones.delete_one({'_id': clone_data['_id']})
@@ -595,7 +620,7 @@ async def activate_clones_and_army():
                         await client.get_chat_member(msg.chat.id, "me")
                         await reaction_manager.add_reaction(client, msg)
                         await db.update_connected_chats(clone_data['_id'], msg.chat.id)
-                        main_bot_info = await Bot.get_me()  # Fixed: Changed 'bot' to 'Bot'
+                        main_bot_info = await Bot.get_me()
                         await promote_army_bots(client, msg.chat.id, main_bot_info.id)
                     except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
                         await db.clones.delete_one({'_id': clone_data['_id']})
