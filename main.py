@@ -6,17 +6,15 @@ import aiofiles
 import logging
 from random import choice
 from pyrogram import Client, filters
-from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import *
 from database import Database
 from config import *
-import traceback
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s',
     handlers=[
         logging.FileHandler("bot.log"),
         logging.StreamHandler()
@@ -137,7 +135,7 @@ async def get_fsub(bot, message):
         return True
     except UserNotParticipant:
         channel_link = (await bot.get_chat(target_channel_id)).invite_link
-        keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]]
+        keyboard = [[InlineKeyboardButton("� join Our Channel", url=channel_link)]]
         await message.reply(
             f"<b>👋 Hello {message.from_user.mention()}, Welcome!</b>\n\n"
             "📢 <b>Exclusive Access Alert!</b> ✨\n\n"
@@ -172,13 +170,12 @@ async def start(bot, update):
 
 @Bot.on_message(filters.private & filters.command("stats"))
 async def stats(bot, update):
-    user_id = str(update.from_user.id)  # Convert to string for comparison
-    bot_owner_str = str(BOT_OWNER)      # Ensure BOT_OWNER is string
+    user_id = str(update.from_user.id)
+    bot_owner_str = str(BOT_OWNER)
     
     logger.debug(f"Stats command received - User ID: {user_id}, Type: {type(user_id)}")
     logger.debug(f"BOT_OWNER: {bot_owner_str}, Type: {type(bot_owner_str)}")
     
-    # Compare as strings first
     if user_id != bot_owner_str:
         logger.warning(f"Unauthorized stats attempt - User: {user_id}, Expected: {bot_owner_str}")
         await update.reply_text("❌ You are not authorized to use this command!")
@@ -214,8 +211,8 @@ async def stats(bot, update):
 
 @Bot.on_message(filters.private & filters.command("broadcast"))
 async def broadcast(bot, update):
-    user_id = str(update.from_user.id)  # Convert to string for comparison
-    bot_owner_str = str(BOT_OWNER)      # Ensure BOT_OWNER is string
+    user_id = str(update.from_user.id)
+    bot_owner_str = str(BOT_OWNER)
     
     logger.debug(f"Broadcast command received - User ID: {user_id}, Type: {type(user_id)}")
     logger.debug(f"BOT_OWNER: {bot_owner_str}, Type: {type(bot_owner_str)}")
@@ -260,7 +257,7 @@ async def broadcast(bot, update):
                     logger.debug(f"Failed to broadcast to user: {user_id} - Error: {error}")
                 await asyncio.sleep(0.5)
             except Exception as e:
-                failed_count += 1
+war                failed_count += 1
                 logger.error(f"Broadcast failed for user {user_id}: {str(e)}")
 
         result_text = (
@@ -276,6 +273,7 @@ async def broadcast(bot, update):
         error_msg = f"Error in broadcast command: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_msg)
         await update.reply_text("❌ An error occurred during broadcast!")
+
 # Clone handling
 @Bot.on_message(filters.private & filters.text & filters.regex(r'^[A-Za-z0-9]+:[A-Za-z0-9_-]+$'))
 async def handle_clone_token(bot, message):
@@ -302,8 +300,8 @@ async def handle_clone_token(bot, message):
         await temp_client.stop()
         logger.info(f"Bot info retrieved: @{bot_info.username}")
 
-        clone_data = await db.add_clone(message.from_user.id, token, bot_info.username)
-        
+        clone_data = await db.add_clone(message.from_user.id, token, bot_info.username Gestão
+        logger.info(f"Adding clone buttons for @{bot_info.username}")
         clone_buttons = InlineKeyboardMarkup([
             [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
             [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
@@ -314,7 +312,7 @@ async def handle_clone_token(bot, message):
             f"✅ Bot cloned successfully!\n\nUsername: @{bot_info.username}",
             reply_markup=clone_buttons
         )
-        logger.info(f"Bot cloned successfully: @{bot_info.username}")
+        logger.info(f"Bot cloned successfully: @{bot_info.username} with correct buttons")
 
         clone_bot = Client(name=f"clone_{bot_info.username}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
         
@@ -329,6 +327,7 @@ async def handle_clone_token(bot, message):
             await save_connected_user(user_id)
             await db.update_connected_users(clone_data['_id'], user_id)
 
+            logger.info(f"Generating start buttons for clone @{bot_info.username}")
             clone_buttons = InlineKeyboardMarkup([
                 [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
                 [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
@@ -444,6 +443,7 @@ async def activate_clones():
                     await save_connected_user(user_id)
                     await db.update_connected_users(clone_data['_id'], user_id)
 
+                    logger.info(f"Generating start buttons for clone @{clone['username']}")
                     clone_buttons = InlineKeyboardMarkup([
                         [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
                         [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
