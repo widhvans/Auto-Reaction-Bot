@@ -38,22 +38,22 @@ Bot = Client(
 
 # Army bot clients
 army_bots = []
-valid_army_bots = []
 for i, token in enumerate(ARMY_BOT_TOKENS):
     if token:
-        army_bot = Client(
-            name=f"army_bot_{i+1}",
-            bot_token=token,
-            api_id=API_ID,
-            api_hash=API_HASH,
-            in_memory=True
+        army_bots.append(
+            Client(
+                name=f"army_bot_{i+1}",
+                bot_token=token,
+                api_id=API_ID,
+                api_hash=API_HASH,
+                in_memory=True
+            )
         )
-        army_bots.append((army_bot, token))
 
 # Positive Telegram reaction emojis only
 VALID_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏"]
 
-# Define UPDATE_CHANNEL
+# Define UPDATE_CHANNEL since it's not in config.py
 UPDATE_CHANNEL = "https://t.me/joinnowearn"
 
 # Smart reaction manager
@@ -177,66 +177,86 @@ async def retry_get_me(army_bot, max_retries=3, timeout=30):
                 return None
             await asyncio.sleep(2)
 
-async def validate_army_bots():
-    global valid_army_bots
-    valid_army_bots = []
-    for army_bot, token in army_bots:
-        try:
-            await army_bot.start()
-            bot_info = await retry_get_me(army_bot)
-            if bot_info:
-                logger.info(f"Army bot validated: @{bot_info.username}")
-                valid_army_bots.append((army_bot, bot_info))
-            else:
-                logger.error(f"Skipping army bot with token {token[:10]}... due to failed get_me")
-                await army_bot.stop()
-        except Exception as e:
-            logger.error(f"Failed to validate army bot with token {token[:10]}...: {str(e)}")
-            await army_bot.stop()
-
 async def promote_army_bots(client, chat_id, reply_func=None):
     try:
-        # Define admin privileges (corrected Pyrogram parameters)
+        # Define admin privileges
         admin_privileges = {
-            "can_change_info": True,
-            "can_post_messages": True,
-            "can_edit_messages": True,
+            "can_manage_chat": True,
             "can_delete_messages": True,
-            "can_invite_users": True,
+            "can_manage_video_chats": True,
             "can_restrict_members": True,
-            "can_pin_messages": True,
             "can_promote_members": True,
-            "can_manage_voice_chats": True,
+            "can_change_info": True,
+            "can_invite_users": True,
+            "can_pin_messages": True,
             "can_manage_topics": True
         }
 
         # Get army bot IDs
-        army_bot_ids = {bot_info.id: bot_info.username for _, bot_info in valid_army_bots}
-        if not army_bot_ids:
-            logger.error(f"No valid army bots available for promotion in chat {chat_id}")
-            if reply_func:
-                await reply_func("No valid army bots available. Please check token validity and try again.")
-            return
+        army_bot_ids = {}
+        for army_bot in army_bots:
+            bot_info = await retry_get_me(army_bot)
+            if bot_info:
+                army_bot_ids[bot_info.id] = bot_info.username
+            else:
+                logger.error("Skipping army bot due to failed get_me")
+                continue
 
         promoted_count = 0
         failed_count = 0
         not_in_chat = []
 
         # Scan chat members to find army bots
-        try:
-            async for member in client.get_chat_members(chat_id):
-                user_id = member.user.id
-                if user_id in army_bot_ids:
-                    username = army_bot_ids[user_id]
-                    # Army bot found, attempt promotion
+        async for member in client.get_chat_members(chat_id):
+            user_id = member.user.id
+            if user_id in army_bot_ids:
+                username = army_bot_ids[user_id]
+                # Army bot found in chat, attempt promotion
+                for attempt in range(3):
+                    try:
+                        await client.promote_chat_member(
+                            chat_id,
+                            user_id,
+                            **admin_privileges
+                        )
+                        logger.info(f"Promoted army bot @{username} to admin in chat {chat_id}")
+                        promoted_count += 1
+                        break
+                    except PeerIdInvalid as e:
+                        logger.warning(f"Attempt {attempt+1}/3 failed for promoting @{username} in chat {chat_id}: {str(e)}")
+                        if attempt + 1 < 3:
+                            await asyncio.sleep(3)
+                        else:
+                            logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
+                            failed_count += 1
+                    except ChatAdminRequired:
+                        logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
+                        failed_count += 1
+                        if reply_func:
+                            await reply_func(f"Main bot lacks 'Add Admins' permission in chat {chat_id}. Please grant this permission.")
+                        break
+                    except Exception as e:
+                        logger.error(f"Error promoting @{username} in chat {chat_id}: {str(e)}")
+                        failed_count += 1
+                        break
+                await asyncio.sleep(1)  # Rate limit delay
+
+        # Check for army bots not in chat and attempt to invite
+        for bot_id, username in army_bot_ids.items():
+            if bot_id not in [member.user.id async for member in client.get_chat_members(chat_id)]:
+                not_in_chat.append(username)
+                try:
+                    await client.add_chat_members(chat_id, bot_id)
+                    logger.info(f"Invited army bot @{username} to chat {chat_id}")
+                    # Retry promotion after inviting
                     for attempt in range(3):
                         try:
                             await client.promote_chat_member(
                                 chat_id,
-                                user_id,
+                                bot_id,
                                 **admin_privileges
                             )
-                            logger.info(f"Promoted army bot @{username} to admin in chat {chat_id}")
+                            logger.info(f"Promoted army bot @{username} to admin in chat {chat_id} after inviting")
                             promoted_count += 1
                             break
                         except PeerIdInvalid as e:
@@ -246,8 +266,6 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                             else:
                                 logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
                                 failed_count += 1
-                                if reply_func:
-                                    await reply_func(f"Failed to promote @{username}. Please send a private /start to @{username} to register it with Telegram, then retry.")
                         except ChatAdminRequired:
                             logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
                             failed_count += 1
@@ -259,76 +277,21 @@ async def promote_army_bots(client, chat_id, reply_func=None):
                             failed_count += 1
                             break
                     await asyncio.sleep(1)  # Rate limit delay
-                await asyncio.sleep(0.5)  # Rate limit delay between members
-        except Exception as e:
-            logger.error(f"Error scanning members in chat {chat_id}: {str(e)}")
-            if reply_func:
-                await reply_func(f"Failed to scan members in chat {chat_id}. Ensure the main bot has admin permissions.")
-
-        # Invite missing army bots
-        for bot_id, username in army_bot_ids.items():
-            try:
-                # Check if bot is already in chat
-                found = False
-                async for member in client.get_chat_members(chat_id):
-                    if member.user.id == bot_id:
-                        found = True
-                        break
-                if not found:
-                    not_in_chat.append(username)
-                    try:
-                        await client.add_chat_members(chat_id, bot_id)
-                        logger.info(f"Invited army bot @{username} to chat {chat_id}")
-                        # Retry promotion after inviting
-                        for attempt in range(3):
-                            try:
-                                await client.promote_chat_member(
-                                    chat_id,
-                                    bot_id,
-                                    **admin_privileges
-                                )
-                                logger.info(f"Promoted army bot @{username} to admin in chat {chat_id} after inviting")
-                                promoted_count += 1
-                                break
-                            except PeerIdInvalid as e:
-                                logger.warning(f"Attempt {attempt+1}/3 failed for promoting @{username} in chat {chat_id}: {str(e)}")
-                                if attempt + 1 < 3:
-                                    await asyncio.sleep(3)
-                                else:
-                                    logger.error(f"Failed to promote @{username} in chat {chat_id} after 3 attempts: {str(e)}")
-                                    failed_count += 1
-                                    if reply_func:
-                                        await reply_func(f"Failed to promote @{username} after inviting. Please send a private /start to @{username} to register it with Telegram, then retry.")
-                            except ChatAdminRequired:
-                                logger.error(f"Client lacks admin permissions to promote @{username} in chat {chat_id}")
-                                failed_count += 1
-                                if reply_func:
-                                    await reply_func(f"Main bot lacks 'Add Admins' permission in chat {chat_id}. Please grant this permission.")
-                                break
-                            except Exception as e:
-                                logger.error(f"Error promoting @{username} in chat {chat_id}: {str(e)}")
-                                failed_count += 1
-                                break
-                        await asyncio.sleep(1)  # Rate limit delay
-                    except ChatAdminRequired:
-                        logger.error(f"Client lacks permission to invite @{username} to chat {chat_id}")
-                        failed_count += 1
-                        if reply_func:
-                            await reply_func(f"Please manually add @{username} to the chat, as the main bot lacks 'Invite Users' permission.")
-                    except Exception as e:
-                        logger.error(f"Error inviting @{username} to chat {chat_id}: {str(e)}")
-                        failed_count += 1
-                        if reply_func:
-                            await reply_func(f"Failed to invite @{username} to chat {chat_id}. Please add it manually.")
-            except Exception as e:
-                logger.error(f"Error checking presence of @{username} in chat {chat_id}: {str(e)}")
-                failed_count += 1
-            await asyncio.sleep(0.5)  # Rate limit delay
+                except ChatAdminRequired:
+                    logger.error(f"Client lacks permission to invite @{username} to chat {chat_id}")
+                    failed_count += 1
+                    if reply_func:
+                        await reply_func(f"Please manually add @{username} to the chat, as the main bot lacks 'Invite Users' permission.")
+                except Exception as e:
+                    logger.error(f"Error inviting @{username} to chat {chat_id}: {str(e)}")
+                    failed_count += 1
+                    if reply_func:
+                        await reply_func(f"Failed to invite @{username} to chat {chat_id}. Please add it manually.")
 
         if reply_func:
             result_text = f"Promotion complete: {promoted_count} army bots promoted, {failed_count} failed.\n"
             if not_in_chat:
-                result_text += f"Bots not in chat (please add manually if invite failed): {', '.join(f'@{name}' for name in not_in_chat)}"
+                result_text += f"Bots not in chat (please add manually): {', '.join(f'@{name}' for name in not_in_chat)}"
             await reply_func(result_text)
         logger.info(f"Army bot promotion in chat {chat_id}: {promoted_count} succeeded, {failed_count} failed")
     except Exception as e:
@@ -336,39 +299,8 @@ async def promote_army_bots(client, chat_id, reply_func=None):
         if reply_func:
             await reply_func("Failed to promote army bots. Ensure the main bot is an admin with 'Add Admins' and 'Invite Users' permissions.")
 
-async def background_army_promotion(client):
-    while True:
-        try:
-            # Scan known group chats from database
-            all_clones = await db.get_all_clones()
-            chat_ids = set()
-            for clone in all_clones:
-                for chat_id in clone.get('connected_chats', []):
-                    try:
-                        chat = await client.get_chat(chat_id)
-                        if chat.type in ["group", "supergroup"]:  # Only process groups
-                            chat_ids.add(chat_id)
-                    except ChannelPrivate:
-                        logger.info(f"Skipping private chat {chat_id} in background promotion")
-                    except Exception as e:
-                        logger.error(f"Error checking chat {chat_id} type: {str(e)}")
-
-            for chat_id in chat_ids:
-                try:
-                    # Verify main bot is in chat and has admin rights
-                    await client.get_chat_member(chat_id, "me")
-                    await promote_army_bots(client, chat_id)
-                except (UserNotParticipant, ChatAdminRequired):
-                    logger.info(f"Main bot not admin in chat {chat_id}, skipping background promotion")
-                except Exception as e:
-                    logger.error(f"Error in background promotion for chat {chat_id}: {str(e)}")
-                await asyncio.sleep(2)  # Rate limit delay between chats
-        except Exception as e:
-            logger.error(f"Error in background army promotion: {str(e)}")
-        await asyncio.sleep(300)  # Run every 5 minutes
-
 # Handlers
-@Bot.on_message(filters.command("addarmy") & filters.group & filters.user(int(BOT_OWNER)))
+@Bot.on_message(filters.command("addarmy") & (filters.group | filters.channel) & filters.user(int(BOT_OWNER)))
 async def add_army_command(bot, message):
     chat_id = message.chat.id
     logger.info(f"Add army command received from {message.from_user.id} in chat {chat_id}")
@@ -500,23 +432,26 @@ async def broadcast(bot, update):
 async def reaction_army_callback(bot, query):
     army_text = (
         "<b>💂 My Reaction Army</b>\n\n"
-        "1. Add the main bot (@{main_bot}) to your group and make it an admin with full permissions, including 'Add Admins' and 'Invite Users'.\n"
-        "2. Add the army bots below to the group using the buttons or manually.\n"
-        "3. Send a private /start to each army bot to register it with Telegram.\n"
-        "4. The main bot will automatically detect and promote existing army bots to admins in groups. Use /addarmy to force immediate promotion.\n\n"
+        "1. First, add the main bot (@{main_bot}) to your group or channel and make it an admin with full permissions, including 'Add Admins' and 'Invite Users'.\n"
+        "2. Add the army bots below to the same group or channel using the buttons.\n"
+        "3. Use the /addarmy command in the group/channel to detect and promote the army bots to admins with the same permissions as the main bot.\n\n"
         "<b>Army Bots:</b>\n"
     ).format(main_bot=BOT_USERNAME)
 
     army_buttons = []
-    for _, bot_info in valid_army_bots:
-        army_text += f"- @{bot_info.username}\n"
-        army_buttons.append([
-            InlineKeyboardButton(text=f"👥 Add @{bot_info.username} to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart"),
-            InlineKeyboardButton(text=f"📺 Add @{bot_info.username} to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")
-        ])
+    for army_bot in army_bots:
+        bot_info = await retry_get_me(army_bot)
+        if bot_info:
+            army_text += f"- @{bot_info.username}\n"
+            army_buttons.append([
+                InlineKeyboardButton(text=f"👥 Add @{bot_info.username} to Group", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart"),
+                InlineKeyboardButton(text=f"📺 Add @{bot_info.username} to Channel", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")
+            ])
+        else:
+            logger.error("Skipping army bot due to failed get_me")
 
     if not army_buttons:
-        army_text += "No valid army bots available. Please check token validity and try again."
+        army_text += "No army bots available at the moment. Please try again later."
 
     await query.message.reply_text(
         text=army_text,
@@ -579,7 +514,7 @@ async def handle_clone_token(bot, message):
             await db.update_connected_users(clone_data['_id'], user_id)
 
             clone_buttons = InlineKeyboardMarkup([
-                [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
+                [InlineKeyboardButton(text="👥 �18 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{bot_info.username}?startgroup=botstart")],
                 [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{bot_info.username}?startchannel=botstart")],
                 [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
             ])
@@ -674,8 +609,30 @@ async def send_reaction(bot, msg: Message):
     except Exception as e:
         logger.error(f"Error in main bot reaction for chat {msg.chat.id}: {str(e)}")
 
+# Activate clones and army bots on startup
 async def activate_clones_and_army():
-    await validate_army_bots()
+    # Start army bots
+    for army_bot in army_bots:
+        try:
+            await army_bot.start()
+            bot_info = await retry_get_me(army_bot)
+            if bot_info:
+                logger.info(f"Army bot started: @{bot_info.username}")
+                
+                @army_bot.on_message(filters.group | filters.channel)
+                async def army_reaction(client, msg):
+                    try:
+                        await client.get_chat_member(msg.chat.id, "me")
+                        await reaction_manager.add_reaction(client, msg)
+                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                        logger.info(f"Army bot @{bot_info.username} not admin in chat {msg.chat.id}, skipping reaction")
+                    except Exception as e:
+                        logger.error(f"Error in army bot reaction for @{bot_info.username}: {str(e)}")
+            else:
+                logger.error("Failed to start army bot due to get_me failure")
+        except Exception as e:
+            logger.error(f"Failed to start army bot: {str(e)}")
+
     # Start clones
     all_clones = await db.get_all_clones()
     for clone in all_clones:
@@ -751,7 +708,6 @@ async def main():
     await Bot.start()
     logger.info("Main Bot Started!")
     asyncio.create_task(reaction_manager.process_reactions())
-    asyncio.create_task(background_army_promotion(Bot))
     await activate_clones_and_army()
     await asyncio.Future()
 
