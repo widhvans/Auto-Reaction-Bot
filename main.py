@@ -6,7 +6,6 @@ import aiofiles
 import logging
 import traceback
 from random import choice
-from pyrogram.errors import FloodWait
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, LinkPreviewOptions
 from pyrogram.errors import FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired, ChannelPrivate, PeerIdInvalid
@@ -108,7 +107,7 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
-CLONE_START_TEXT = f"<b>🤖 Parent Bot - @{BOT_USERNAME} 🤖\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʟ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
+CLONE_START_TEXT = f"<b>🤖 Parent Bot - @{BOT_USERNAME} 🤖\n\nɪ ᴀᴍ ᴀ ᴄʟᴏɴᴇ ᴏꜰ ᴛʜɪs ᴘᴏᴡᴇʀꜰᴜʟʜ ᴀᴜᴛᴏ ʀᴇᴀᴄᴛɪᴏɴ ʙᴏᴛ.\n\nᴀᴅᴅ ᴍᴇ ᴀs ᴀɴ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛᴏ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ!</b>"
 
 CLONE_TEXT = """<b>Clone Your Bot</b>
 Create a bot with @BotFather and send me the token here to clone me!"""
@@ -335,6 +334,100 @@ async def background_army_promotion(client):
         except Exception as e:
             logger.error(f"Error in background army promotion: {str(e)}")
         await asyncio.sleep(300)  # Run every 5 minutes
+
+async def activate_clones_and_army():
+    # Start army bots
+    for army_bot in army_bots:
+        try:
+            await army_bot.start()
+            bot_info = await retry_get_me(army_bot)
+            if bot_info:
+                logger.info(f"Army bot started: @{bot_info.username}")
+                
+                @army_bot.on_message(filters.group | filters.channel)
+                async def army_reaction(client, msg):
+                    try:
+                        await client.get_chat_member(msg.chat.id, "me")
+                        await reaction_manager.add_reaction(client, msg)
+                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                        logger.info(f"Army bot @{bot_info.username} not admin in chat {msg.chat.id}, skipping reaction")
+                    except Exception as e:
+                        logger.error(f"Error in army bot reaction for @{bot_info.username}: {str(e)}")
+            else:
+                logger.error("Failed to start army bot due to get_me failure")
+        except Exception as e:
+            logger.error(f"Failed to start army bot: {str(e)}")
+
+    # Start clones
+    all_clones = await db.get_all_clones()
+    for clone in all_clones:
+        if clone['active']:
+            try:
+                clone_bot = Client(
+                    name=f"clone_{clone['username']}",
+                    bot_token=clone['token'],
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                    in_memory=True
+                )
+                
+                @clone_bot.on_message(filters.private & filters.command(["start"]) & ~filters.me)
+                async def clone_start(client, update):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    user_id = update.from_user.id
+                    await save_connected_user(user_id)
+                    await db.update_connected_users(clone_data['_id'], user_id)
+
+                    clone_buttons = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(text="👥 ᴀᴅᴅ ᴛᴏ ɢʀᴏᴜᴘ", url=f"https://telegram.me/{clone['username']}?startgroup=botstart")],
+                        [InlineKeyboardButton(text="📺 ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ", url=f"https://telegram.me/{clone['username']}?startchannel=botstart")],
+                        [InlineKeyboardButton(text="🤖 ᴄʀᴇᴀᴛᴇ ʏᴏᴜʀ ᴏᴡɴ ʙᴏᴛ", url=f"https://telegram.me/{BOT_USERNAME}")]
+                    ])
+                    await update.reply_text(
+                        text=CLONE_START_TEXT,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        reply_markup=clone_buttons
+                    )
+                    logger.info(f"Start command processed for clone @{clone['username']} by user {update.from_user.id} with buttons using username @{clone['username']}")
+
+                @clone_bot.on_message(filters.private & ~filters.command(["start"]) & ~filters.me)
+                async def clone_reply(client, update):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    user_id = update.from_user.id
+                    await save_connected_user(user_id)
+                    await db.update_connected_users(clone_data['_id'], user_id)
+                    await reaction_manager.add_reaction(client, update)
+
+                @clone_bot.on_message(filters.group | filters.channel)
+                async def clone_reaction(client, msg):
+                    clone_data = await db.get_clone(clone['token'])
+                    if not clone_data or not clone_data['active']:
+                        logger.warning(f"Clone @{clone['username']} is inactive or not found")
+                        return
+                    
+                    try:
+                        await client.get_chat_member(msg.chat.id, "me")
+                        await reaction_manager.add_reaction(client, msg)
+                        await db.update_connected_chats(clone_data['_id'], msg.chat.id)
+                    except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                        await db.clones.delete_one({'_id': clone_data['_id']})
+                        logger.info(f"Bot @{clone['username']} disconnected and removed from database due to lack of access in {msg.chat.id}")
+                    except Exception as e:
+                        logger.error(f"Error in reaction for @{clone['username']}: {str(e)}")
+                
+                asyncio.create_task(clone_bot.start())
+                logger.info(f"Clone bot started: @{clone['username']}")
+            except Exception as e:
+                logger.error(f"Failed to start clone bot @{clone['username']}: {str(e)}")
+                await db.clones.delete_one({'_id': clone['_id']})
 
 # Handlers
 @Bot.on_message(filters.command("addarmy") & (filters.group | filters.channel) & filters.user(int(BOT_OWNER)))
