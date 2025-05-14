@@ -9,7 +9,6 @@ class Database:
         self.users = self.db.users
         self.clones = self.db.clones
 
-    # User related methods
     def new_user(self, user_id):
         return dict(id=user_id)
 
@@ -32,7 +31,6 @@ class Database:
     async def delete_user(self, user_id):
         await self.users.delete_many({'id': int(user_id)})
 
-    # Clone related methods
     async def add_clone(self, user_id, token, clone_username):
         clone_data = {
             'user_id': user_id,
@@ -83,7 +81,6 @@ class Database:
             {'$addToSet': {'connected_users': user_id}}
         )
 
-    # Broadcast related methods
     async def get_all_connected_users(self):
         all_users = await self.users.find({}).to_list(length=None)
         all_clones = await self.clones.find({}).to_list(length=None)
