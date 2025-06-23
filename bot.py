@@ -1,4 +1,4 @@
-# bot.py (Final Corrected Version - 2)
+# bot.py (Guaranteed Final Version)
 
 import os
 import re
@@ -6,13 +6,12 @@ import time
 import asyncio
 import logging
 import traceback
+import aiohttp # Naya import
 from random import choice
 from pyrogram import Client, filters
 from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, ForceReply
 )
-# YAHAN IMPORT KA PATH THEEK KIYA GAYA HAI
-from pyrogram.raw.functions import SetBotWebhook
 from pyrogram.errors import (
     FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired,
     ChannelPrivate, PeerIdInvalid, AuthKeyUnregistered
@@ -122,7 +121,7 @@ async def is_subscribed(bot, message):
         except Exception as e:
             logger.error(f"Could not get invite link for AUTH_CHANNEL {AUTH_CHANNEL}: {e}")
             await message.reply("Could not get the channel link. Please contact the owner.")
-            return True # Allow usage if channel is not accessible
+            return True
 
         keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]] if channel_link else None
         await message.reply(
@@ -259,15 +258,26 @@ def add_reaction_handler(client):
 # --- Startup Sequence ---
 async def activate_all_bots():
     logger.info("Starting activation sequence...")
-    
-    await Bot.start()
-    
-    try:
-        await Bot.invoke(SetBotWebhook(url=""))
-        logger.info("Any existing webhook was successfully deleted.")
-    except Exception as e:
-        logger.error(f"Could not delete webhook (this is not a critical error): {e}")
 
+    # --- NAYA, FOOLPROOF TAREEKA WEBHOOK DELETE KARNE KA ---
+    try:
+        logger.info("Deleting any existing webhook using a direct API call...")
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url="
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if result.get("ok"):
+                        logger.info("Webhook successfully deleted.")
+                    else:
+                        logger.warning(f"API call to delete webhook was not 'ok': {result.get('description')}")
+                else:
+                    logger.error(f"Failed to call Telegram API to delete webhook. Status: {response.status}")
+    except Exception as e:
+        logger.error(f"An exception occurred while trying to delete webhook: {e}")
+    # --- Naye tareeke ka ant ---
+
+    await Bot.start()
     bot_info = await Bot.get_me()
     logger.info(f"Main Bot @{bot_info.username} started in long polling mode.")
     add_reaction_handler(Bot)
@@ -297,6 +307,7 @@ async def activate_all_bots():
             results = await asyncio.gather(*start_tasks, return_exceptions=True)
             success_count = sum(1 for r in results if not isinstance(r, Exception))
             logger.info(f"Successfully started {success_count} army bots.")
+
 
 async def main():
     asyncio.create_task(reaction_manager.process_reactions())
