@@ -1,16 +1,16 @@
 # bot.py
 
 import os
-import re  # <-- YEH IMPORT ADD KIYA GAYA HAI
+import re
 import time
 import asyncio
 import logging
 import traceback
 from random import choice
 from pyrogram import Client, filters
+# LinkPreviewOptions ko yahan se hata diya gaya hai
 from pyrogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, Message,
-    LinkPreviewOptions, ForceReply
+    InlineKeyboardMarkup, InlineKeyboardButton, Message, ForceReply
 )
 from pyrogram.errors import (
     FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired,
@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 db = Database(DATABASE_URL, BOT_USERNAME)
 
 # --- Global Variables ---
-# Main bot client
 Bot = Client(
     name="MainReactionBot",
     bot_token=BOT_TOKEN,
@@ -38,17 +37,14 @@ Bot = Client(
     api_hash=API_HASH,
     in_memory=True
 )
-
-# Dictionary to hold running army bot clients, keyed by bot_id for easy management
 army_bots = {}
 owner_is_adding_bot = {}
-
 
 # --- Smart Reaction Manager ---
 class ReactionManager:
     def __init__(self):
         self.queue = asyncio.Queue()
-        self.rate_limit_delay = 0.5  # Delay between reactions to avoid flood waits
+        self.rate_limit_delay = 0.5
 
     async def add_reaction_task(self, client, message):
         await self.queue.put((client, message))
@@ -57,9 +53,8 @@ class ReactionManager:
         while True:
             client, msg = await self.queue.get()
             try:
-                # Check if client is still valid and has a 'me' attribute
                 if not client or not hasattr(client, 'me') or not client.me:
-                    logger.warning(f"Client object is invalid or not started, skipping reaction.")
+                    logger.warning("Client object is invalid or not started, skipping reaction.")
                     continue
                 
                 emoji = choice(VALID_EMOJIS)
@@ -68,17 +63,17 @@ class ReactionManager:
             except FloodWait as e:
                 logger.warning(f"Flood wait of {e.value}s for @{client.me.username}. Retrying after sleep.")
                 await asyncio.sleep(e.value + 2)
-                await self.add_reaction_task(client, msg)  # Re-queue the task
+                await self.add_reaction_task(client, msg)
             except ReactionInvalid:
                 logger.warning(f"Reaction disabled in chat {msg.chat.id}. Skipping.")
             except Exception as e:
-                logger.error(f"Error sending reaction from @{client.me.username if hasattr(client, 'me') and client.me else 'Unknown Client'}: {e}")
+                username = client.me.username if hasattr(client, 'me') and client.me else 'Unknown Client'
+                logger.error(f"Error sending reaction from @{username}: {e}")
             finally:
                 self.queue.task_done()
                 await asyncio.sleep(self.rate_limit_delay)
 
 reaction_manager = ReactionManager()
-
 
 # --- Messages & Keyboards ---
 START_TEXT = """<b>{},
@@ -96,7 +91,6 @@ def get_start_buttons(user_id):
     return InlineKeyboardMarkup(buttons)
 
 async def get_army_management_view():
-    """Helper function to create the army management message view."""
     buttons = [[InlineKeyboardButton("➕ Add New Bot", callback_data="add_army_prompt")]]
     current_army = await db.get_all_army_bots()
 
@@ -113,7 +107,6 @@ async def get_army_management_view():
     buttons.append([InlineKeyboardButton("🔙 Back to Start", callback_data="back_to_start")])
     return text, InlineKeyboardMarkup(buttons)
 
-
 # --- Helper Functions ---
 async def is_subscribed(bot, message):
     try:
@@ -126,7 +119,8 @@ async def is_subscribed(bot, message):
             "<b>To use me, you must join my updates channel.</b>\n\n"
             "<i>After joining, send /start again!</i>",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
+            # Yahan badlav kiya gaya hai
+            link_preview_options={"is_disabled": True}
         )
         return False
     except Exception as e:
@@ -147,7 +141,8 @@ async def start_command(bot, message):
     await message.reply_text(
         text=START_TEXT.format(message.from_user.mention),
         reply_markup=get_start_buttons(user_id),
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
+        # Yahan badlav kiya gaya hai
+        link_preview_options={"is_disabled": True}
     )
 
 # --- Owner-Only Army Management ---
@@ -156,7 +151,6 @@ async def manage_army_callback(bot, query):
     text, keyboard = await get_army_management_view()
     await query.message.edit(text, reply_markup=keyboard)
 
-
 @Bot.on_callback_query(filters.regex("^add_army_prompt$") & filters.user(BOT_OWNER))
 async def add_army_prompt_callback(bot, query):
     owner_is_adding_bot[query.from_user.id] = True
@@ -164,7 +158,6 @@ async def add_army_prompt_callback(bot, query):
         "Please send me the **bot token** of the bot you want to add to the army.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Cancel", callback_data="manage_army")]])
     )
-
 
 @Bot.on_message(filters.private & filters.text & filters.user(BOT_OWNER))
 async def handle_new_bot_token(bot, message):
@@ -199,7 +192,6 @@ async def handle_new_bot_token(bot, message):
 
             await processing_msg.edit(f"✅ Success! @{bot_info.username} has been added to your army and is now active.")
             
-            # Refresh the army list for the owner
             text, keyboard = await get_army_management_view()
             await message.reply(text, reply_markup=keyboard)
 
@@ -208,7 +200,6 @@ async def handle_new_bot_token(bot, message):
         except Exception as e:
             await processing_msg.edit(f"❌ An error occurred: `{e}`. Could not add the bot.")
             logger.error(f"Failed to add army bot: {e}")
-
 
 @Bot.on_callback_query(filters.regex(r"^remove_army_(\d+)$") & filters.user(BOT_OWNER))
 async def remove_army_callback(bot, query):
@@ -228,20 +219,18 @@ async def remove_army_callback(bot, query):
             logger.error(f"Could not stop bot client {bot_id_to_remove}: {e}")
 
     await db.remove_army_bot(bot_id_to_remove)
-    
     await query.answer(f"@{bot_data['username']} has been removed from your army.", show_alert=True)
     
-    # Refresh the list
     text, keyboard = await get_army_management_view()
     await query.message.edit(text, reply_markup=keyboard)
-
 
 @Bot.on_callback_query(filters.regex("^back_to_start$") & filters.user(BOT_OWNER))
 async def back_to_start_callback(bot, query):
     await query.message.edit(
         text=START_TEXT.format(query.from_user.mention),
         reply_markup=get_start_buttons(query.from_user.id),
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
+        # Yahan badlav kiya gaya hai
+        link_preview_options={"is_disabled": True}
     )
 
 # --- Reaction Logic ---
@@ -290,19 +279,20 @@ async def activate_all_bots():
     
     if start_tasks:
         results = await asyncio.gather(*start_tasks, return_exceptions=True)
+        success_count = 0
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 bot_data = army_bots_from_db[i]
                 logger.error(f"Failed to start bot @{bot_data.get('username', 'N/A')}: {result}")
-        logger.info(f"Successfully started {len([r for r in results if not isinstance(r, Exception)])} army bots.")
-
+            else:
+                success_count += 1
+        logger.info(f"Successfully started {success_count} army bots.")
 
 async def main():
     asyncio.create_task(reaction_manager.process_reactions())
     await activate_all_bots()
     logger.info("Bot is now online and listening for messages.")
     await asyncio.Future()
-
 
 if __name__ == "__main__":
     try:
