@@ -1,6 +1,4 @@
 # requirements.txt
-https://codeload.github.com/pyrogram/pyrogram/zip/refs/heads/master
+pyrogram[asyncio]
 tgcrypto
-aiofiles
 motor
-aiohttp
