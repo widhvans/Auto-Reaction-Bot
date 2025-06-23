@@ -1,4 +1,4 @@
-# bot.py
+# bot.py (Final Version)
 
 import os
 import re
@@ -52,8 +52,8 @@ class ReactionManager:
         while True:
             client, msg = await self.queue.get()
             try:
-                if not client or not hasattr(client, 'me') or not client.me:
-                    logger.warning("Client object is invalid or not started, skipping reaction.")
+                if not client or not client.is_connected or not hasattr(client, 'me') or not client.me:
+                    logger.warning(f"Client is invalid or not connected, skipping reaction.")
                     continue
                 
                 emoji = choice(VALID_EMOJIS)
@@ -237,36 +237,35 @@ def add_reaction_handler(client):
             await c.get_chat_member(m.chat.id, "me")
             await reaction_manager.add_reaction_task(c, m)
         except (UserNotParticipant, ChannelPrivate):
-            logger.warning(f"@{c.me.username} not in chat {m.chat.id}. Skipping reaction.")
+            # Is bot ko chat se nikal diya gaya hai, isliye react nahi karega.
+            pass
         except Exception as e:
             logger.error(f"Error in reaction handler for @{c.me.username} in chat {m.chat.id}: {e}")
 
 # --- Startup Sequence ---
 async def activate_all_bots():
-    logger.info("Starting activation sequence for all bots...")
-
-    # --- NAYA CODE: Webhook ko automatically delete karne ke liye ---
-    try:
-        logger.info("Purana webhook (agar koi hai) hatane ki koshish ki ja rahi hai...")
-        # Main Bot ke liye webhook delete karein
-        await Bot.delete_webhook()
-        logger.info(f"Main bot (@{(await Bot.get_me()).username}) ka webhook safaltapoorvak hata diya gaya.")
-    except Exception as e:
-        logger.error(f"Webhook hatane me asamarth: {e}")
-    # --- Naye code ka ant ---
+    logger.info("Starting activation sequence...")
     
+    # Bot start karne se pehle webhook delete karna
     await Bot.start()
+    try:
+        await Bot.delete_webhook()
+        logger.info("Any existing webhook was successfully deleted.")
+    except Exception as e:
+        logger.error(f"Could not delete webhook: {e}")
+
     bot_info = await Bot.get_me()
-    logger.info(f"Main Bot @{bot_info.username} started.")
+    logger.info(f"Main Bot @{bot_info.username} started in long polling mode.")
     add_reaction_handler(Bot)
 
+    # Database se army bots ko activate karna
     army_bots_from_db = await db.get_all_army_bots()
     if not army_bots_from_db:
         logger.warning("No army bots found in the database to activate.")
         return
 
-    logger.info(f"Found {len(army_bots_from_db)} army bots in the database. Activating them...")
-
+    logger.info(f"Found {len(army_bots_from_db)} army bots. Activating them...")
+    # ... (baaki army bot activation ka code waisa hi hai)
     start_tasks = []
     for bot_data in army_bots_from_db:
         try:
@@ -285,13 +284,7 @@ async def activate_all_bots():
     
     if start_tasks:
         results = await asyncio.gather(*start_tasks, return_exceptions=True)
-        success_count = 0
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                bot_data = army_bots_from_db[i]
-                logger.error(f"Failed to start bot @{bot_data.get('username', 'N/A')}: {result}")
-            else:
-                success_count += 1
+        success_count = sum(1 for r in results if not isinstance(r, Exception))
         logger.info(f"Successfully started {success_count} army bots.")
 
 async def main():
