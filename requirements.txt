@@ -1,9 +1,6 @@
-# Pyrogram and its dependencies
-pyrogram
+# requirements.txt
+https://codeload.github.com/pyrogram/pyrogram/zip/refs/heads/master
 tgcrypto
-
-# Database driver
+aiofiles
 motor
-
-# For environment variables
-python-dotenv
+aiohttp
