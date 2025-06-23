@@ -7,7 +7,7 @@ from random import choice
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message,
-    LinkPreviewOptions, CallbackQuery
+    CallbackQuery  # LinkPreviewOptions removed from here
 )
 from pyrogram.errors import (
     FloodWait, ReactionInvalid, UserNotParticipant,
@@ -118,16 +118,31 @@ async def is_subscribed(bot, message):
         await bot.get_chat_member(AUTH_CHANNEL, message.from_user.id)
         return True
     except UserNotParticipant:
-        invite_link = (await bot.get_chat(AUTH_CHANNEL)).invite_link
+        invite_link = None
+        try:
+            # Try to get invite link
+            chat = await bot.get_chat(AUTH_CHANNEL)
+            if chat.invite_link:
+                invite_link = chat.invite_link
+            else:
+                 # If no invite link, create one
+                 invite_link = await bot.export_chat_invite_link(AUTH_CHANNEL)
+        except Exception as e:
+            logger.error(f"Could not get/create invite link for {AUTH_CHANNEL}: {e}")
+            await message.reply("Sorry, there was an error. Please try again later.")
+            return False
+
         buttons = [[InlineKeyboardButton("🔔 Join Channel", url=invite_link)]]
         await message.reply(
             "You must join my updates channel to use me!",
             reply_markup=InlineKeyboardMarkup(buttons),
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
+            disable_web_page_preview=True  # <-- THE FIX IS HERE
         )
         return False
     except Exception as e:
         logger.error(f"Subscription check failed: {e}")
+        # Inform user about the issue
+        await message.reply("Sorry, I couldn't check if you are a member of the updates channel. Please try again.")
         return False
 
 # --- Bot Owner Commands ---
@@ -198,7 +213,7 @@ async def remove_bot_callback(bot, query: CallbackQuery):
     # Refresh the army list
     await my_army_callback(bot, query)
 
-@Bot.on_message(filters.private & filters.text)
+@Bot.on_message(filters.private & filters.text & ~filters.command("start"))
 async def private_message_handler(bot, message):
     user_id = message.from_user.id
     if user_id == BOT_OWNER and owner_conversation_state.get(user_id) == "awaiting_token":
@@ -244,32 +259,24 @@ async def private_message_handler(bot, message):
 
 # --- Universal Reaction Handler ---
 async def reaction_sender(client, message: Message):
-    # This function is used by the main bot and all army bots
     try:
-        # A quick check to see if the bot is an admin
-        # Using get_chat_member is heavy, a better way is to cache permissions
-        # or handle the error upon reaction failure.
-        # For simplicity, we attempt reaction and handle failure.
         await reaction_manager.add_reaction_task(client, message)
     except (ChatAdminRequired, ChannelPrivate):
         logger.warning(f"Bot @{client.me.username} is not an admin in {message.chat.id}, can't react.")
-        # Optionally, leave the chat if not admin
-        # await client.leave_chat(message.chat.id)
     except Exception as e:
-        # Catching other potential errors
-        if "RIGHT_FORBIDDEN" in str(e): # A common error when not admin
+        if "RIGHT_FORBIDDEN" in str(e): 
              logger.warning(f"Bot @{client.me.username} lacks permission in {message.chat.id}.")
         else:
              logger.error(f"Reaction error for @{client.me.username} in {message.chat.id}: {e}")
 
 # Register handler for the main bot
-@Bot.on_message((filters.group | filters.channel) & filters.incoming)
+@Bot.on_message((filters.group | filters.channel) & filters.incoming & ~filters.service)
 async def main_bot_react(client, message: Message):
     await reaction_sender(client, message)
 
 # Function to register handlers for army bots
 def register_army_bot_handlers(client, username):
-    @client.on_message((filters.group | filters.channel) & filters.incoming)
+    @client.on_message((filters.group | filters.channel) & filters.incoming & ~filters.service)
     async def army_bot_react(_, message: Message):
         await reaction_sender(client, message)
     
@@ -290,16 +297,17 @@ async def start_all_bots():
         token = bot_data['token']
         username = bot_data['username']
         try:
-            client = Client(name=f"army_bot_{bot_id}", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+            client = Client(name=f"army_bot_{bot_id}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
             await client.start()
             army_bots[bot_id] = client
             register_army_bot_handlers(client, username)
             logger.info(f"Army bot @{username} started successfully.")
+        except (AuthKeyUnregistered, UserDeactivated):
+             logger.error(f"Failed to start army bot @{username} due to invalid token. Removing from DB.")
+             await db.remove_army_bot(bot_id)
         except Exception as e:
             logger.error(f"Failed to start army bot @{username} (ID: {bot_id}). Error: {e}")
-            # Optionally remove the faulty bot from the DB
-            # await db.remove_army_bot(bot_id)
-
+            
 async def main():
     logger.info("Starting Auto Reaction Bot service...")
     # Start the reaction processing queue in the background
