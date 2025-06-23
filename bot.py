@@ -11,7 +11,6 @@ from pyrogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, Message,
                             CallbackQuery)
 from pyrogram.errors import (FloodWait, ReactionInvalid, UserNotParticipant,
                              ChatAdminRequired, ChannelPrivate, AuthKeyUnregistered)
-# MessageHandler को यहाँ से हटाकर नीचे इम्पोर्ट किया गया है
 from database import Database
 from config import *
 
@@ -38,8 +37,15 @@ UPDATE_CHANNEL = "https://t.me/joinnowearn"
 # --- Reaction Manager for Performance ---
 class ReactionManager:
     def __init__(self, num_workers: int = 10):
+        # अब वर्कर __init__ में नहीं, बल्कि एक अलग async मेथड में शुरू होंगे
         self.queue = asyncio.Queue()
-        self.workers = [asyncio.create_task(self.worker()) for _ in range(num_workers)]
+        self.num_workers = num_workers
+        self.workers = []
+
+    async def start_workers(self):
+        # यह मेथड workers को शुरू करेगा जब event loop चल रहा हो
+        self.workers = [asyncio.create_task(self.worker()) for _ in range(self.num_workers)]
+        logger.info(f"Started {self.num_workers} reaction workers.")
 
     async def add_reaction(self, client: Client, message: Message):
         await self.queue.put((client, message))
@@ -50,21 +56,23 @@ class ReactionManager:
                 client, msg = await self.queue.get()
                 emoji = choice(VALID_EMOJIS)
                 await client.send_reaction(msg.chat.id, msg.id, emoji)
-                logger.info(f"Reaction '{emoji}' sent by bot @{client.me.username} to msg {msg.id} in chat {msg.chat.id}")
+                # लॉगिंग को थोड़ा कम कर दिया ताकि लॉग्स बहुत ज्यादा न भरें
+                # logger.info(f"Reaction '{emoji}' sent by bot @{client.me.username} to msg {msg.id} in chat {msg.chat.id}")
             except FloodWait as e:
                 logger.warning(f"Flood wait of {e.value}s for @{client.me.username}. Retrying...")
                 await asyncio.sleep(e.value + 1)
                 await self.add_reaction(client, msg) # Re-queue the task
             except ReactionInvalid:
-                logger.warning(f"Invalid reaction in chat {msg.chat.id}. Reactions might be disabled.")
+                pass # इस एरर को लॉग करने की जरूरत नहीं
             except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
-                 logger.warning(f"Bot @{client.me.username} left or was removed from {msg.chat.id}.")
+                 pass # इन एरर्स को भी लॉग करने की जरूरत नहीं
             except Exception as e:
                 logger.error(f"Reaction error by @{client.me.username}: {e}")
             finally:
                 self.queue.task_done()
 
-reaction_manager = ReactionManager()
+# बदला हुआ कोड: ReactionManager को यहाँ None पर सेट करें
+reaction_manager = None
 
 # --- Message Texts & Keyboards ---
 START_TEXT = """<b>{},
@@ -96,7 +104,7 @@ async def check_fsub(message: Message):
             "<b>👋 To use me, you must join our Updates Channel.</b>\n\n"
             "This helps us provide continuous service. Please join and try again.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔔 Join Updates Channel", url=invite_link)]]),
-            disable_web_page_preview=True # बदला हुआ कोड
+            disable_web_page_preview=True
         )
         return False
     except Exception as e:
@@ -128,7 +136,7 @@ async def start_command(client: Client, message: Message):
     await message.reply_text(
         text=START_TEXT.format(message.from_user.mention),
         reply_markup=keyboard,
-        disable_web_page_preview=True # बदला हुआ कोड
+        disable_web_page_preview=True
     )
 
 @Bot.on_message(filters.command("stats") & filters.user(BOT_OWNER))
@@ -206,7 +214,7 @@ async def back_to_main_callback(client: Client, query: CallbackQuery):
     await query.message.edit(
         text=START_TEXT.format(query.from_user.mention),
         reply_markup=START_BUTTONS_OWNER,
-        disable_web_page_preview=True # बदला हुआ कोड
+        disable_web_page_preview=True
     )
 
 @Bot.on_message(filters.text & filters.private & filters.user(BOT_OWNER))
@@ -227,7 +235,6 @@ async def owner_conversation_handler(client: Client, message: Message):
             bot_info = await temp_client.get_me()
             await db.add_army_bot(token, bot_info.id, bot_info.username)
             
-            # Start the new bot and add to running clients
             await start_single_army_bot(token, bot_info.id, bot_info.username)
 
             await processing_msg.edit(f"✅ **Success!**\nBot @{bot_info.username} has been added to the army.")
@@ -239,7 +246,6 @@ async def owner_conversation_handler(client: Client, message: Message):
             logger.error(f"Failed to add new army bot: {e}")
         finally:
             await temp_client.stop()
-            # Refresh the management view
             keyboard = await get_army_management_keyboard()
             await message.reply("💂 **Army Management**", reply_markup=keyboard)
 
@@ -249,8 +255,7 @@ async def army_bot_reaction_handler(client: Client, message: Message):
     await reaction_manager.add_reaction(client, message)
 
 async def start_single_army_bot(token: str, bot_id: int, username: str):
-    """Starts a single army bot client."""
-    from pyrogram.handlers import MessageHandler # सर्कुलर इम्पोर्ट से बचने के लिए यहाँ इम्पोर्ट करें
+    from pyrogram.handlers import MessageHandler
     try:
         army_bot_client = Client(
             name=f"army_bot_{bot_id}",
@@ -269,12 +274,10 @@ async def start_single_army_bot(token: str, bot_id: int, username: str):
         logger.info(f"Army bot @{username} started successfully.")
     except Exception as e:
         logger.error(f"Failed to start army bot @{username} (ID: {bot_id}): {e}")
-        # If it fails to start, remove it from DB to avoid restart loops
         await db.remove_army_bot(bot_id)
         logger.info(f"Removed faulty army bot @{username} from database.")
 
 async def initialize_army():
-    """Initializes all army bots from the database on startup."""
     all_army_bots = await db.get_all_army_bots()
     logger.info(f"Found {len(all_army_bots)} bots in the army database. Initializing...")
     tasks = [start_single_army_bot(bot['token'], bot['bot_id'], bot['username']) for bot in all_army_bots]
@@ -283,6 +286,11 @@ async def initialize_army():
 
 # --- Main Execution ---
 async def main():
+    # बदला हुआ कोड: ReactionManager को यहाँ बनाएं और वर्कर्स शुरू करें
+    global reaction_manager
+    reaction_manager = ReactionManager()
+    await reaction_manager.start_workers()
+
     logger.info("Starting main bot...")
     await Bot.start()
     bot_info = Bot.me
@@ -291,7 +299,7 @@ async def main():
     await initialize_army()
     
     logger.info("Bot is now online and listening for updates.")
-    await asyncio.Future() # Keep the bot running
+    await asyncio.Future()
 
 if __name__ == "__main__":
     try:
