@@ -8,7 +8,6 @@ import logging
 import traceback
 from random import choice
 from pyrogram import Client, filters
-# LinkPreviewOptions ko yahan se hata diya gaya hai
 from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, ForceReply
 )
@@ -119,7 +118,6 @@ async def is_subscribed(bot, message):
             "<b>To use me, you must join my updates channel.</b>\n\n"
             "<i>After joining, send /start again!</i>",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            # Yahan badlav kiya gaya hai
             link_preview_options={"is_disabled": True}
         )
         return False
@@ -141,7 +139,6 @@ async def start_command(bot, message):
     await message.reply_text(
         text=START_TEXT.format(message.from_user.mention),
         reply_markup=get_start_buttons(user_id),
-        # Yahan badlav kiya gaya hai
         link_preview_options={"is_disabled": True}
     )
 
@@ -229,7 +226,6 @@ async def back_to_start_callback(bot, query):
     await query.message.edit(
         text=START_TEXT.format(query.from_user.mention),
         reply_markup=get_start_buttons(query.from_user.id),
-        # Yahan badlav kiya gaya hai
         link_preview_options={"is_disabled": True}
     )
 
@@ -248,6 +244,16 @@ def add_reaction_handler(client):
 # --- Startup Sequence ---
 async def activate_all_bots():
     logger.info("Starting activation sequence for all bots...")
+
+    # --- NAYA CODE: Webhook ko automatically delete karne ke liye ---
+    try:
+        logger.info("Purana webhook (agar koi hai) hatane ki koshish ki ja rahi hai...")
+        # Main Bot ke liye webhook delete karein
+        await Bot.delete_webhook()
+        logger.info(f"Main bot (@{(await Bot.get_me()).username}) ka webhook safaltapoorvak hata diya gaya.")
+    except Exception as e:
+        logger.error(f"Webhook hatane me asamarth: {e}")
+    # --- Naye code ka ant ---
     
     await Bot.start()
     bot_info = await Bot.get_me()
