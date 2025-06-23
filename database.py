@@ -1,37 +1,52 @@
-# database.py
-
 import motor
 from motor.motor_asyncio import AsyncIOMotorClient
+import datetime
 
 class Database:
     def __init__(self, url, database_name):
         self._client = AsyncIOMotorClient(url)
         self.db = self._client[database_name]
         self.users = self.db.users
-        self.army_accounts = self.db.army_accounts
+        self.army = self.db.army # New collection for army bots
 
-    # User related methods
+    # User-related methods
+    def new_user(self, user_id):
+        return dict(id=user_id)
+
     async def add_user(self, user_id):
-        await self.users.insert_one({'id': user_id})
+        user = self.new_user(user_id)
+        await self.users.insert_one(user)
 
     async def is_user_exist(self, user_id):
-        return bool(await self.users.find_one({'id': int(user_id)}))
+        user = await self.users.find_one({'id': int(user_id)})
+        return bool(user)
 
     async def total_users_count(self):
         return await self.users.count_documents({})
 
-    # Army Account related methods
-    async def add_army_account(self, user_id: int, first_name: str):
-        # अब हम सिर्फ़ user_id और नाम स्टोर करेंगे
-        account_data = {'user_id': user_id, 'first_name': first_name}
-        await self.army_accounts.insert_one(account_data)
+    async def get_all_users(self):
+        return self.users.find({})
 
-    async def remove_army_account(self, user_id: int):
-        await self.army_accounts.delete_one({'user_id': user_id})
+    async def delete_user(self, user_id):
+        await self.users.delete_many({'id': int(user_id)})
 
-    async def get_all_army_accounts(self):
-        accounts = self.army_accounts.find({})
-        return await accounts.to_list(length=None)
+    # Army Bot Management Methods
+    async def add_army_bot(self, token, bot_id, bot_username):
+        bot_data = {
+            'bot_id': bot_id,
+            'token': token,
+            'username': bot_username,
+            'added_at': datetime.datetime.now()
+        }
+        await self.army.insert_one(bot_data)
 
-    async def is_army_account_exist(self, user_id: int):
-        return bool(await self.army_accounts.find_one({'user_id': user_id}))
+    async def remove_army_bot(self, bot_id):
+        await self.army.delete_one({'bot_id': bot_id})
+
+    async def get_all_army_bots(self):
+        army_bots = self.army.find({})
+        return await army_bots.to_list(length=None)
+
+    async def is_army_bot_exist(self, bot_id):
+        bot = await self.army.find_one({'bot_id': int(bot_id)})
+        return bool(bot)
