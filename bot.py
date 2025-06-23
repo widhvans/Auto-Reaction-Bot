@@ -37,13 +37,11 @@ UPDATE_CHANNEL = "https://t.me/joinnowearn"
 # --- Reaction Manager for Performance ---
 class ReactionManager:
     def __init__(self, num_workers: int = 10):
-        # अब वर्कर __init__ में नहीं, बल्कि एक अलग async मेथड में शुरू होंगे
         self.queue = asyncio.Queue()
         self.num_workers = num_workers
         self.workers = []
 
     async def start_workers(self):
-        # यह मेथड workers को शुरू करेगा जब event loop चल रहा हो
         self.workers = [asyncio.create_task(self.worker()) for _ in range(self.num_workers)]
         logger.info(f"Started {self.num_workers} reaction workers.")
 
@@ -56,22 +54,17 @@ class ReactionManager:
                 client, msg = await self.queue.get()
                 emoji = choice(VALID_EMOJIS)
                 await client.send_reaction(msg.chat.id, msg.id, emoji)
-                # लॉगिंग को थोड़ा कम कर दिया ताकि लॉग्स बहुत ज्यादा न भरें
-                # logger.info(f"Reaction '{emoji}' sent by bot @{client.me.username} to msg {msg.id} in chat {msg.chat.id}")
             except FloodWait as e:
                 logger.warning(f"Flood wait of {e.value}s for @{client.me.username}. Retrying...")
                 await asyncio.sleep(e.value + 1)
-                await self.add_reaction(client, msg) # Re-queue the task
-            except ReactionInvalid:
-                pass # इस एरर को लॉग करने की जरूरत नहीं
-            except (UserNotParticipant, ChatAdminRequired, ChannelPrivate):
-                 pass # इन एरर्स को भी लॉग करने की जरूरत नहीं
+                await self.add_reaction(client, msg)
+            except (ReactionInvalid, UserNotParticipant, ChatAdminRequired, ChannelPrivate):
+                pass
             except Exception as e:
                 logger.error(f"Reaction error by @{client.me.username}: {e}")
             finally:
                 self.queue.task_done()
 
-# बदला हुआ कोड: ReactionManager को यहाँ None पर सेट करें
 reaction_manager = None
 
 # --- Message Texts & Keyboards ---
@@ -81,8 +74,12 @@ START_TEXT = """<b>{},
 
 ᴊᴜsᴛ ᴀᴅᴅ ᴍᴇ ᴀs ᴀ ᴀᴅᴍɪɴ ɪɴ ʏᴏᴜʀ ᴄʜᴀɴɴᴇʟ ᴏʀ ɢʀᴏᴜᴘ ᴛʜᴇɴ sᴇᴇ ᴍʏ ᴘᴏᴡᴇʀ</b>"""
 
+# >>> नया बटन यहाँ जोड़ा गया है <<<
 START_BUTTONS_USER = InlineKeyboardMarkup(
-    [[InlineKeyboardButton(text='🔔 ᴜᴩᴅᴀᴛᴇꜱ', url=UPDATE_CHANNEL)]]
+    [
+        [InlineKeyboardButton(text='💂 हमारी आर्मी', callback_data='show_army_list')],
+        [InlineKeyboardButton(text='🔔 ᴜᴩᴅᴀᴛᴇꜱ', url=UPDATE_CHANNEL)]
+    ]
 )
 
 START_BUTTONS_OWNER = InlineKeyboardMarkup(
@@ -139,6 +136,47 @@ async def start_command(client: Client, message: Message):
         disable_web_page_preview=True
     )
 
+# >>> यूज़र्स के लिए नया हैंडलर <<<
+@Bot.on_callback_query(filters.regex("^show_army_list$"))
+async def show_army_list_callback(client: Client, query: CallbackQuery):
+    await query.answer()
+
+    army_bots_list = await db.get_all_army_bots()
+
+    if not army_bots_list:
+        text = "अभी हमारी आर्मी में कोई बॉट उपलब्ध नहीं है। कृपया बाद में प्रयास करें।"
+        keyboard = [[InlineKeyboardButton("⬅️ वापस", callback_data="back_to_user_main")]]
+    else:
+        text = "<b>💂 हमारी रिएक्शन आर्मी</b>\n\n"
+        text += "बेहतर और तेज़ रिएक्शन के लिए, नीचे दिए गए सभी बॉट्स को अपने ग्रुप या चैनल में एडमिन बनाएं।\n\n"
+        
+        keyboard = []
+        for bot in army_bots_list:
+            text += f"➥ @{bot['username']}\n"
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"➕ @{bot['username']} को जोड़ें", 
+                    url=f"https://t.me/{bot['username']}?startgroup=true"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("⬅️ वापस", callback_data="back_to_user_main")])
+
+    await query.message.edit(
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        disable_web_page_preview=True
+    )
+
+@Bot.on_callback_query(filters.regex("^back_to_user_main$"))
+async def back_to_user_main_callback(client: Client, query: CallbackQuery):
+    await query.answer()
+    await query.message.edit(
+        text=START_TEXT.format(query.from_user.mention),
+        reply_markup=START_BUTTONS_USER,
+        disable_web_page_preview=True
+    )
+
 @Bot.on_message(filters.command("stats") & filters.user(BOT_OWNER))
 async def stats_command(client: Client, message: Message):
     stats_text = await get_stats_text()
@@ -146,7 +184,8 @@ async def stats_command(client: Client, message: Message):
 
 @Bot.on_message((filters.group | filters.channel))
 async def main_bot_reaction_handler(client: Client, message: Message):
-    await reaction_manager.add_reaction(client, message)
+    if reaction_manager:
+        await reaction_manager.add_reaction(client, message)
 
 
 # --- Owner & Army Management ---
@@ -155,7 +194,7 @@ async def stats_callback(client: Client, query: CallbackQuery):
     stats_text = await get_stats_text()
     await query.message.edit(
         stats_text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_to_main")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_to_owner_main")]])
     )
     await query.answer()
 
@@ -168,7 +207,7 @@ async def get_army_management_keyboard():
             InlineKeyboardButton("❌ Remove", callback_data=f"remove_army_{bot['bot_id']}")
         ])
     keyboard.append([InlineKeyboardButton("➕ Add New Bot", callback_data="add_army_prompt")])
-    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_owner_main")])
     return InlineKeyboardMarkup(keyboard)
 
 @Bot.on_callback_query(filters.regex("^manage_army$") & filters.user(BOT_OWNER))
@@ -208,8 +247,8 @@ async def remove_army_callback(client: Client, query: CallbackQuery):
         reply_markup=keyboard
     )
 
-@Bot.on_callback_query(filters.regex("^back_to_main$") & filters.user(BOT_OWNER))
-async def back_to_main_callback(client: Client, query: CallbackQuery):
+@Bot.on_callback_query(filters.regex("^back_to_owner_main$") & filters.user(BOT_OWNER))
+async def back_to_owner_main_callback(client: Client, query: CallbackQuery):
     await query.answer()
     await query.message.edit(
         text=START_TEXT.format(query.from_user.mention),
@@ -252,7 +291,8 @@ async def owner_conversation_handler(client: Client, message: Message):
 
 # --- Army Bot Startup Logic ---
 async def army_bot_reaction_handler(client: Client, message: Message):
-    await reaction_manager.add_reaction(client, message)
+    if reaction_manager:
+        await reaction_manager.add_reaction(client, message)
 
 async def start_single_army_bot(token: str, bot_id: int, username: str):
     from pyrogram.handlers import MessageHandler
@@ -286,7 +326,6 @@ async def initialize_army():
 
 # --- Main Execution ---
 async def main():
-    # बदला हुआ कोड: ReactionManager को यहाँ बनाएं और वर्कर्स शुरू करें
     global reaction_manager
     reaction_manager = ReactionManager()
     await reaction_manager.start_workers()
