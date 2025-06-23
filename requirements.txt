@@ -1,4 +1,8 @@
-# requirements.txt
-pyrogram[asyncio]
+# Pyrogram (using the dev branch as in original file for latest features)
+-i https://pypi.org/simple
+https://codeload.github.com/pyrogram/pyrogram/zip/refs/heads/master
+
+# Required libraries
 tgcrypto
+aiofiles
 motor
