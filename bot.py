@@ -8,10 +8,10 @@ from typing import Dict
 
 from pyrogram import Client, filters, enums
 from pyrogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, Message,
-                            CallbackQuery, LinkPreviewOptions)
+                            CallbackQuery)
 from pyrogram.errors import (FloodWait, ReactionInvalid, UserNotParticipant,
                              ChatAdminRequired, ChannelPrivate, AuthKeyUnregistered)
-
+# MessageHandler को यहाँ से हटाकर नीचे इम्पोर्ट किया गया है
 from database import Database
 from config import *
 
@@ -96,7 +96,7 @@ async def check_fsub(message: Message):
             "<b>👋 To use me, you must join our Updates Channel.</b>\n\n"
             "This helps us provide continuous service. Please join and try again.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔔 Join Updates Channel", url=invite_link)]]),
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
+            disable_web_page_preview=True # बदला हुआ कोड
         )
         return False
     except Exception as e:
@@ -128,7 +128,7 @@ async def start_command(client: Client, message: Message):
     await message.reply_text(
         text=START_TEXT.format(message.from_user.mention),
         reply_markup=keyboard,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
+        disable_web_page_preview=True # बदला हुआ कोड
     )
 
 @Bot.on_message(filters.command("stats") & filters.user(BOT_OWNER))
@@ -206,7 +206,7 @@ async def back_to_main_callback(client: Client, query: CallbackQuery):
     await query.message.edit(
         text=START_TEXT.format(query.from_user.mention),
         reply_markup=START_BUTTONS_OWNER,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
+        disable_web_page_preview=True # बदला हुआ कोड
     )
 
 @Bot.on_message(filters.text & filters.private & filters.user(BOT_OWNER))
@@ -250,20 +250,18 @@ async def army_bot_reaction_handler(client: Client, message: Message):
 
 async def start_single_army_bot(token: str, bot_id: int, username: str):
     """Starts a single army bot client."""
+    from pyrogram.handlers import MessageHandler # सर्कुलर इम्पोर्ट से बचने के लिए यहाँ इम्पोर्ट करें
     try:
         army_bot_client = Client(
             name=f"army_bot_{bot_id}",
             api_id=API_ID,
             api_hash=API_HASH,
             bot_token=token,
-            in_memory=True,
-            no_updates=True, # We only need it to send reactions, not process commands
+            in_memory=True
         )
         await army_bot_client.start()
         
-        # We need to get a dispatcher to add handlers to a running client
-        dispatcher = army_bot_client.dispatcher
-        dispatcher.add_handler(
+        army_bot_client.add_handler(
             MessageHandler(army_bot_reaction_handler, (filters.group | filters.channel))
         )
         
@@ -289,9 +287,6 @@ async def main():
     await Bot.start()
     bot_info = Bot.me
     logger.info(f"Main bot @{bot_info.username} started!")
-
-    # Import MessageHandler here to avoid circular import issues with dispatcher
-    from pyrogram.handlers import MessageHandler
 
     await initialize_army()
     
