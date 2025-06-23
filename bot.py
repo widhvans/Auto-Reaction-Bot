@@ -1,4 +1,4 @@
-# bot.py (Final Corrected Version)
+# bot.py (Final Corrected Version - 2)
 
 import os
 import re
@@ -11,8 +11,8 @@ from pyrogram import Client, filters
 from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, ForceReply
 )
-# Naya import Webhook delete karne ke liye
-from pyrogram.raw.functions.bots import SetBotWebhook
+# YAHAN IMPORT KA PATH THEEK KIYA GAYA HAI
+from pyrogram.raw.functions import SetBotWebhook
 from pyrogram.errors import (
     FloodWait, ReactionInvalid, UserNotParticipant, ChatAdminRequired,
     ChannelPrivate, PeerIdInvalid, AuthKeyUnregistered
@@ -114,12 +114,21 @@ async def is_subscribed(bot, message):
         await bot.get_chat_member(AUTH_CHANNEL, message.from_user.id)
         return True
     except UserNotParticipant:
-        channel_link = (await bot.get_chat(AUTH_CHANNEL)).invite_link
-        keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]]
+        channel_link = ""
+        try:
+            chat = await bot.get_chat(AUTH_CHANNEL)
+            if chat.invite_link:
+                channel_link = chat.invite_link
+        except Exception as e:
+            logger.error(f"Could not get invite link for AUTH_CHANNEL {AUTH_CHANNEL}: {e}")
+            await message.reply("Could not get the channel link. Please contact the owner.")
+            return True # Allow usage if channel is not accessible
+
+        keyboard = [[InlineKeyboardButton("🔔 Join Our Channel", url=channel_link)]] if channel_link else None
         await message.reply(
             "<b>To use me, you must join my updates channel.</b>\n\n"
             "<i>After joining, send /start again!</i>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
             link_preview_options={"is_disabled": True}
         )
         return False
@@ -133,9 +142,13 @@ async def start_command(bot, message):
     user_id = message.from_user.id
     if not await db.is_user_exist(user_id):
         await db.add_user(user_id)
-        await bot.send_message(LOG_CHANNEL, f"New User: [{message.from_user.first_name}](tg://user?id={user_id})")
+        if LOG_CHANNEL:
+            try:
+                await bot.send_message(LOG_CHANNEL, f"New User: [{message.from_user.first_name}](tg://user?id={user_id})")
+            except Exception as e:
+                logger.error(f"Couldn't log new user to LOG_CHANNEL: {e}")
 
-    if not await is_subscribed(bot, message):
+    if AUTH_CHANNEL and not await is_subscribed(bot, message):
         return
 
     await message.reply_text(
@@ -144,8 +157,7 @@ async def start_command(bot, message):
         link_preview_options={"is_disabled": True}
     )
 
-# ... (baaki sabhi bot handlers waise hi rahenge) ...
-# --- Owner-Only Army Management ---
+# ... (The rest of the handlers are unchanged) ...
 @Bot.on_callback_query(filters.regex("^manage_army$") & filters.user(BOT_OWNER))
 async def manage_army_callback(bot, query):
     text, keyboard = await get_army_management_view()
@@ -250,17 +262,11 @@ async def activate_all_bots():
     
     await Bot.start()
     
-    # --- YAHAN BADLAV KIYA GAYA HAI ---
-    # Webhook delete karne ka sahi tareeka
     try:
-        # Hum Telegram API ko seedha SetBotWebhook command bhej rahe hain
-        # jisme URL khali (empty) hai. Yeh webhook ko delete kar deta hai.
         await Bot.invoke(SetBotWebhook(url=""))
         logger.info("Any existing webhook was successfully deleted.")
     except Exception as e:
-        # Error aane par use log karein, lekin bot ko band na karein
         logger.error(f"Could not delete webhook (this is not a critical error): {e}")
-    # --- Badlav ka ant ---
 
     bot_info = await Bot.get_me()
     logger.info(f"Main Bot @{bot_info.username} started in long polling mode.")
@@ -269,7 +275,28 @@ async def activate_all_bots():
     army_bots_from_db = await db.get_all_army_bots()
     if not army_bots_from_db:
         logger.warning("No army bots found in the database to activate.")
-        # ... (baaki code waisa hi hai)
+    else:
+        logger.info(f"Found {len(army_bots_from_db)} army bots. Activating them...")
+        start_tasks = []
+        for bot_data in army_bots_from_db:
+            try:
+                client = Client(
+                    name=str(bot_data['bot_id']),
+                    bot_token=bot_data['token'],
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                    in_memory=True
+                )
+                start_tasks.append(asyncio.create_task(client.start()))
+                army_bots[bot_data['bot_id']] = client
+                add_reaction_handler(client)
+            except Exception as e:
+                logger.error(f"Failed to initialize client for bot @{bot_data.get('username', 'N/A')}: {e}")
+        
+        if start_tasks:
+            results = await asyncio.gather(*start_tasks, return_exceptions=True)
+            success_count = sum(1 for r in results if not isinstance(r, Exception))
+            logger.info(f"Successfully started {success_count} army bots.")
 
 async def main():
     asyncio.create_task(reaction_manager.process_reactions())
