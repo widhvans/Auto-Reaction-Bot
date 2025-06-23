@@ -1,225 +1,320 @@
-# bot.py
-
+import os
+import time
 import asyncio
 import logging
+import traceback
 from random import choice
-from typing import Dict, Union
-
-from pyrogram import Client, filters
-from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import SessionPasswordNeeded, PhoneCodeInvalid, PhoneCodeExpired
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-
+from pyrogram import Client, filters, enums
+from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, Message,
+    LinkPreviewOptions, CallbackQuery
+)
+from pyrogram.errors import (
+    FloodWait, ReactionInvalid, UserNotParticipant,
+    ChatAdminRequired, ChannelPrivate, PeerIdInvalid,
+    AuthKeyUnregistered, UserDeactivated, BotMethodInvalid
+)
 from database import Database
 from config import *
 
-# Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-# Globals
-db = Database(DATABASE_URL, "autoreactionbot")
-Bot = Client("AutoReactionBot", bot_token=BOT_TOKEN, api_id=API_ID, api_hash=API_HASH)
-ARMY_CLIENTS: Dict[int, Client] = {}
-CONVERSATION_CACHE: Dict[int, Dict[str, Union[str, Client]]] = {}
+# Bot and Database initialization
+db = Database(DATABASE_URL, BOT_USERNAME)
+Bot = Client(
+    name="AutoReactionBot",
+    bot_token=BOT_TOKEN,
+    api_id=API_ID,
+    api_hash=API_HASH
+)
 
-VALID_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏", "🥰", "🤩", "👌", "💯"]
+# In-memory storage for running army bot clients
+army_bots = {} # Dictionary to store client instances {bot_id: client}
+owner_conversation_state = {}
 
-# Reaction Manager (इसमें कोई बदलाव नहीं)
+# Reaction Emojis
+VALID_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏", "😁", "🤩", "💯", "🙏", "🕊️"]
+
+# Reaction Manager (for handling high load)
 class ReactionManager:
-    def __init__(self, num_workers: int = 25):
+    def __init__(self):
         self.queue = asyncio.Queue()
-        self.workers = []
-        for _ in range(num_workers):
-            self.workers.append(asyncio.create_task(self.worker()))
+        self.rate_limits = {}
+        self.reactions_per_second = 10 # More realistic rate limit
 
-    async def add_reaction(self, client: Client, message: Message):
-        await self.queue.put((client, message))
+    async def add_reaction_task(self, client, msg):
+        await self.queue.put((client, msg))
 
-    async def worker(self):
+    async def process_reactions(self):
         while True:
             try:
                 client, msg = await self.queue.get()
-                emoji = choice(VALID_EMOJIS)
-                await client.send_reaction(msg.chat.id, msg.id, emoji)
-            except FloodWait as e:
-                await asyncio.sleep(e.value + 1)
-                await self.add_reaction(client, msg)
-            except (ReactionInvalid, UserNotParticipant, ChatAdminRequired):
-                pass
+                chat_id = msg.chat.id
+                current_time = time.time()
+
+                # Rate limiting per chat
+                if chat_id not in self.rate_limits:
+                    self.rate_limits[chat_id] = []
+                
+                self.rate_limits[chat_id] = [t for t in self.rate_limits[chat_id] if current_time - t < 1]
+
+                if len(self.rate_limits[chat_id]) >= self.reactions_per_second:
+                    await asyncio.sleep(1) # Wait if we are exceeding the rate limit
+
+                try:
+                    emoji = choice(VALID_EMOJIS)
+                    await client.send_reaction(chat_id, msg.id, emoji)
+                    logger.info(f"Reaction '{emoji}' by @{client.me.username} in chat {chat_id}")
+                    self.rate_limits[chat_id].append(time.time())
+                except FloodWait as e:
+                    logger.warning(f"Flood wait of {e.value}s for @{client.me.username} in chat {chat_id}.")
+                    await asyncio.sleep(e.value + 1)
+                    await self.add_reaction_task(client, msg) # Re-add to queue
+                except (ReactionInvalid, PeerIdInvalid):
+                    logger.warning(f"Invalid reaction or peer in chat {chat_id}. Skipping.")
+                except Exception as e:
+                    logger.error(f"Error sending reaction in {chat_id}: {e}")
             except Exception as e:
-                logger.error(f"Reaction error: {e}")
+                logger.error(f"Error in reaction processor: {e}")
             finally:
-                if not self.queue.empty():
-                    self.queue.task_done()
+                self.queue.task_done()
 
 reaction_manager = ReactionManager()
 
-# --- इंटरैक्टिव लॉगिन हैंडलर्स ---
+# --- Message Texts and Keyboards ---
+START_TEXT = """<b>Hi {},
 
-async def interactive_login_handler(client: Client, message: Message):
-    chat_id = message.chat.id
-    if chat_id not in CONVERSATION_CACHE:
+I am a simple but powerful auto-reaction bot.
+
+Just add me as an admin in your channel or group, then see my power!</b>"""
+
+OWNER_START_TEXT = """<b>Welcome, Owner! 👑</b>
+
+You have access to special commands to manage your reaction army."""
+
+# Buttons
+START_BUTTONS = InlineKeyboardMarkup(
+    [[InlineKeyboardButton(text='🔔 Updates', url=UPDATE_CHANNEL)]]
+)
+OWNER_START_BUTTONS = InlineKeyboardMarkup(
+    [
+        [InlineKeyboardButton(text='💂 My Army', callback_data='my_army')],
+        [InlineKeyboardButton(text='🔔 Updates', url=UPDATE_CHANNEL)]
+    ]
+)
+
+# --- Helper Functions ---
+async def is_subscribed(bot, message):
+    try:
+        await bot.get_chat_member(AUTH_CHANNEL, message.from_user.id)
+        return True
+    except UserNotParticipant:
+        invite_link = (await bot.get_chat(AUTH_CHANNEL)).invite_link
+        buttons = [[InlineKeyboardButton("🔔 Join Channel", url=invite_link)]]
+        await message.reply(
+            "You must join my updates channel to use me!",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        return False
+    except Exception as e:
+        logger.error(f"Subscription check failed: {e}")
+        return False
+
+# --- Bot Owner Commands ---
+@Bot.on_message(filters.private & filters.command("start"))
+async def start_command(bot, message):
+    if not await is_subscribed(bot, message):
         return
 
-    state = CONVERSATION_CACHE[chat_id].get("state")
-    temp_client = CONVERSATION_CACHE[chat_id].get("client")
-    phone_number = CONVERSATION_CACHE[chat_id].get("phone")
-
-    try:
-        if state == "awaiting_code":
-            phone_code = message.text.replace("-", "").strip()
-            phone_code_hash = CONVERSATION_CACHE[chat_id].get("phone_code_hash")
-            await message.reply("⏳ कोड को सत्यापित किया जा रहा है...")
-            await temp_client.sign_in(phone_number, phone_code_hash, phone_code)
-            # यह अपने आप 2FA के लिए SessionPasswordNeeded एरर देगा
-            me = await temp_client.get_me()
-            await finalize_login(message, temp_client, me)
-
-        elif state == "awaiting_password":
-            password = message.text.strip()
-            await message.reply("⏳ पासवर्ड की जाँच की जा रही है...")
-            await temp_client.check_password(password)
-            me = await temp_client.get_me()
-            await finalize_login(message, temp_client, me)
-
-    except SessionPasswordNeeded:
-        CONVERSATION_CACHE[chat_id]["state"] = "awaiting_password"
-        await message.reply("यह अकाउंट 2-Step Verification से सुरक्षित है। कृपया अपना पासवर्ड भेजें।")
-    except (PhoneCodeInvalid, PhoneCodeExpired):
-        await message.reply("❌ भेजा गया कोड गलत या एक्सपायर हो गया है। कृपया फिर से प्रयास करें।")
-        del CONVERSATION_CACHE[chat_id]
-    except Exception as e:
-        await message.reply(f"❌ एक त्रुटि हुई: {e}")
-        logger.error(f"Login Error: {e}")
-        del CONVERSATION_CACHE[chat_id]
-        if temp_client.is_connected:
-            await temp_client.disconnect()
-
-
-async def finalize_login(message: Message, temp_client: Client, me):
-    await db.add_army_account(me.id, me.first_name)
-    session_file_name = f"army_user_{me.id}"
-    
-    # Save session file and stop client
-    # Pyrogram v2+ automatically saves session on successful login when name is provided
-    await temp_client.stop()
-    
-    # Start the user account to add to running army
-    await start_single_army_user(me.id, me.first_name)
-    
-    await message.reply(f"✅ **सफलता!**\nअकाउंट **{me.first_name}** आर्मी में सफलतापूर्वक जोड़ दिया गया है।")
-    del CONVERSATION_CACHE[message.chat.id]
-
-
-# --- मुख्य बॉट के कमांड्स और बटन्स ---
-
-@Bot.on_message(filters.command("start") & filters.private)
-async def start_command(client, message):
-    # ... (यह फंक्शन पहले जैसा ही रहेगा)
     user_id = message.from_user.id
-    # ... (बाकी का कोड)
-    
-@Bot.on_callback_query(filters.regex("^add_army_prompt$") & filters.user(BOT_OWNER))
-async def add_army_prompt(client: Client, query: CallbackQuery):
-    chat_id = query.from_user.id
-    CONVERSATION_CACHE[chat_id] = {"state": "awaiting_phone"}
-    await query.message.edit(
-        "**आर्मी में नया यूज़र अकाउंट जोड़ने के लिए, कृपया उस अकाउंट का फ़ोन नंबर कंट्री कोड के साथ भेजें।**\n\n"
-        "उदाहरण: `+919876543210`\n\n"
-        "कैंसिल करने के लिए /cancel टाइप करें।"
-    )
+    if not await db.is_user_exist(user_id):
+        await db.add_user(user_id)
+        await bot.send_message(LOG_CHANNEL, f"New User: [{message.from_user.first_name}](tg://user?id={user_id})")
 
-@Bot.on_message(filters.private & filters.user(BOT_OWNER) & filters.text)
-async def owner_message_handler(client, message):
-    chat_id = message.from_user.id
-    if chat_id not in CONVERSATION_CACHE:
-        # अगर कोई कन्वर्सेशन नहीं चल रही है तो कुछ न करें
-        return
-
-    state = CONVERSATION_CACHE[chat_id].get("state")
-
-    if message.text == "/cancel":
-        del CONVERSATION_CACHE[chat_id]
-        await message.reply("प्रक्रिया रद्द कर दी गई है।")
-        return
-
-    if state == "awaiting_phone":
-        phone_number = message.text.strip()
-        await message.reply(f"⏳ `{phone_number}` के लिए OTP भेजा जा रहा है...")
-        
-        # यूनीक नाम के साथ एक अस्थायी क्लाइंट बनाएं
-        temp_client = Client(name=f"army_user_{phone_number}", api_id=API_ID, api_hash=API_HASH)
-        
-        try:
-            await temp_client.connect()
-            sent_code = await temp_client.send_code(phone_number)
-            
-            CONVERSATION_CACHE[chat_id].update({
-                "state": "awaiting_code",
-                "phone": phone_number,
-                "client": temp_client,
-                "phone_code_hash": sent_code.phone_code_hash
-            })
-            await message.reply(
-                "आपके नंबर पर एक कोड भेजा गया है। कृपया वह कोड भेजें।\n"
-                "अगर कोड डैश के साथ आता है, तो उसे वैसे ही भेजें (जैसे `1-2-3-4-5`)।"
-            )
-        except Exception as e:
-            await message.reply(f"❌ फ़ोन नंबर भेजने में त्रुटि: {e}")
-            logger.error(f"Send code error: {e}")
-            del CONVERSATION_CACHE[chat_id]
-            await temp_client.disconnect()
-    
-    # बाकी के राज्यों को interactive_login_handler हैंडल करेगा
+    if user_id == BOT_OWNER:
+        await message.reply_text(OWNER_START_TEXT, reply_markup=OWNER_START_BUTTONS)
     else:
-        await interactive_login_handler(client, message)
+        await message.reply_text(START_TEXT.format(message.from_user.mention), reply_markup=START_BUTTONS)
 
+@Bot.on_callback_query(filters.regex("^my_army$"))
+async def my_army_callback(bot, query: CallbackQuery):
+    if query.from_user.id != BOT_OWNER:
+        return await query.answer("This is for the owner only!", show_alert=True)
 
-# आर्मी मैनेजमेंट के बाकी बटन्स... (get_army_management_keyboard, remove_army_callback, etc.)
-# ये फंक्शन पहले जैसे ही रहेंगे, बस bot की जगह account का इस्तेमाल करें
+    army = await db.get_all_army_bots()
+    if not army:
+        text = "Your army is empty. Add a bot to get started."
+        buttons = [[InlineKeyboardButton("➕ Add Bot", callback_data="add_bot")]]
+    else:
+        text = "Here is your reaction army:"
+        buttons = []
+        for bot_info in army:
+            buttons.append([
+                InlineKeyboardButton(f"@{bot_info['username']}", url=f"https://t.me/{bot_info['username']}"),
+                InlineKeyboardButton("➖ Remove", callback_data=f"remove_bot_{bot_info['bot_id']}")
+            ])
+        buttons.append([InlineKeyboardButton("➕ Add Another Bot", callback_data="add_bot")])
 
-async def start_single_army_user(user_id: int, first_name: str):
-    session_name = f"army_user_{user_id}"
-    try:
-        user_client = Client(name=session_name, api_id=API_ID, api_hash=API_HASH)
-        await user_client.start()
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+@Bot.on_callback_query(filters.regex("^add_bot$"))
+async def add_bot_callback(bot, query: CallbackQuery):
+    if query.from_user.id != BOT_OWNER:
+        return await query.answer("This is for the owner only!", show_alert=True)
+    
+    owner_conversation_state[BOT_OWNER] = "awaiting_token"
+    await query.message.edit_text("Please send me the bot token of the bot you want to add to your army.")
+
+@Bot.on_callback_query(filters.regex(r"^remove_bot_(\d+)"))
+async def remove_bot_callback(bot, query: CallbackQuery):
+    if query.from_user.id != BOT_OWNER:
+        return await query.answer("This is for the owner only!", show_alert=True)
+
+    bot_id_to_remove = int(query.matches[0].group(1))
+
+    # Stop the bot client if it's running
+    if bot_id_to_remove in army_bots:
+        try:
+            await army_bots[bot_id_to_remove].stop()
+            del army_bots[bot_id_to_remove]
+            logger.info(f"Successfully stopped and removed bot client: {bot_id_to_remove}")
+        except Exception as e:
+            logger.error(f"Could not stop bot {bot_id_to_remove}: {e}")
+
+    # Remove from database
+    await db.remove_army_bot(bot_id_to_remove)
+    await query.answer("Bot removed from your army.", show_alert=True)
+    
+    # Refresh the army list
+    await my_army_callback(bot, query)
+
+@Bot.on_message(filters.private & filters.text)
+async def private_message_handler(bot, message):
+    user_id = message.from_user.id
+    if user_id == BOT_OWNER and owner_conversation_state.get(user_id) == "awaiting_token":
+        token = message.text.strip()
+        del owner_conversation_state[user_id]
         
-        user_client.add_handler(MessageHandler(army_user_reaction_handler, filters.group | filters.channel))
-        ARMY_CLIENTS[user_id] = user_client
-        logger.info(f"Army user account '{first_name}' (ID: {user_id}) started from session file.")
+        processing_msg = await message.reply("Validating token and adding bot...")
+
+        try:
+            # Check if bot exists with this token already
+            temp_client = Client(name=f"temp_{token[:10]}", bot_token=token, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+            await temp_client.start()
+            
+            bot_info = await temp_client.get_me()
+            bot_id = bot_info.id
+            username = bot_info.username
+
+            if await db.is_army_bot_exist(bot_id):
+                await processing_msg.edit(f"❌ This bot (@{username}) is already in your army.")
+                await temp_client.stop()
+                return
+
+            # Add to DB and start the bot
+            await db.add_army_bot(token, bot_id, username)
+            army_bots[bot_id] = temp_client
+            register_army_bot_handlers(temp_client, username) # Register handlers for the new bot
+            
+            await processing_msg.edit(f"✅ Success! @{username} has been added to your army and is now active.")
+            logger.info(f"Owner added new army bot: @{username} (ID: {bot_id})")
+
+        except (AuthKeyUnregistered, UserDeactivated):
+            await processing_msg.edit("❌ Invalid Token: The provided bot token has been revoked or deleted.")
+        except Exception as e:
+            await processing_msg.edit(f"❌ An error occurred: {e}")
+            logger.error(f"Failed to add army bot: {e}")
+    else:
+        # Handle other private messages or forward to owner if desired
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Add me to a channel or group as admin to get reactions."
+        )
+
+
+# --- Universal Reaction Handler ---
+async def reaction_sender(client, message: Message):
+    # This function is used by the main bot and all army bots
+    try:
+        # A quick check to see if the bot is an admin
+        # Using get_chat_member is heavy, a better way is to cache permissions
+        # or handle the error upon reaction failure.
+        # For simplicity, we attempt reaction and handle failure.
+        await reaction_manager.add_reaction_task(client, message)
+    except (ChatAdminRequired, ChannelPrivate):
+        logger.warning(f"Bot @{client.me.username} is not an admin in {message.chat.id}, can't react.")
+        # Optionally, leave the chat if not admin
+        # await client.leave_chat(message.chat.id)
     except Exception as e:
-        logger.error(f"Failed to start army user {first_name}: {e}")
-        await db.remove_army_account(user_id)
+        # Catching other potential errors
+        if "RIGHT_FORBIDDEN" in str(e): # A common error when not admin
+             logger.warning(f"Bot @{client.me.username} lacks permission in {message.chat.id}.")
+        else:
+             logger.error(f"Reaction error for @{client.me.username} in {message.chat.id}: {e}")
 
-async def initialize_army():
-    all_accounts = await db.get_all_army_accounts()
-    logger.info(f"Found {len(all_accounts)} user accounts. Initializing...")
-    for acc in all_accounts:
-        await start_single_army_user(acc['user_id'], acc['first_name'])
-    logger.info(f"Army initialization complete. {len(ARMY_CLIENTS)} accounts active.")
+# Register handler for the main bot
+@Bot.on_message((filters.group | filters.channel) & filters.incoming)
+async def main_bot_react(client, message: Message):
+    await reaction_sender(client, message)
 
+# Function to register handlers for army bots
+def register_army_bot_handlers(client, username):
+    @client.on_message((filters.group | filters.channel) & filters.incoming)
+    async def army_bot_react(_, message: Message):
+        await reaction_sender(client, message)
+    
+    logger.info(f"Handlers registered for army bot @{username}")
+
+
+# --- Bot Startup ---
+async def start_all_bots():
+    # Start the main bot
+    await Bot.start()
+    bot_info = await Bot.get_me()
+    logger.info(f"Main bot @{bot_info.username} started!")
+
+    # Start all army bots from the database
+    all_army_bots = await db.get_all_army_bots()
+    for bot_data in all_army_bots:
+        bot_id = bot_data['bot_id']
+        token = bot_data['token']
+        username = bot_data['username']
+        try:
+            client = Client(name=f"army_bot_{bot_id}", bot_token=token, api_id=API_ID, api_hash=API_HASH)
+            await client.start()
+            army_bots[bot_id] = client
+            register_army_bot_handlers(client, username)
+            logger.info(f"Army bot @{username} started successfully.")
+        except Exception as e:
+            logger.error(f"Failed to start army bot @{username} (ID: {bot_id}). Error: {e}")
+            # Optionally remove the faulty bot from the DB
+            # await db.remove_army_bot(bot_id)
 
 async def main():
-    await Bot.start()
-    logger.info("Main command bot started.")
+    logger.info("Starting Auto Reaction Bot service...")
+    # Start the reaction processing queue in the background
+    asyncio.create_task(reaction_manager.process_reactions())
     
-    await initialize_army()
+    # Start the main bot and all saved army bots
+    await start_all_bots()
     
-    logger.info("Bot is fully online.")
-    await asyncio.Future()
+    logger.info("All bots are running. Bot is now online.")
+    await asyncio.Future() # Keep the script running
 
 if __name__ == "__main__":
-    Bot.add_handler(CallbackQueryHandler(add_army_prompt, filters.regex("^add_army_prompt$") & filters.user(BOT_OWNER)))
-    # ... बाकी सभी handler यहाँ जोड़ें ...
-    
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(main())
-        else:
-            loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot shutting down...")
+        logger.info("Service stopped by user.")
     except Exception as e:
-        logger.error(f"Bot crashed: {e}", exc_info=True)
+        logger.critical(f"Critical error in main loop: {e}", exc_info=True)
